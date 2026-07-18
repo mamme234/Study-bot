@@ -9,6 +9,9 @@ module.exports = {
     
     DATA_DIR: path.join(__dirname, 'data'),
     USERS_FILE: path.join(__dirname, 'data', 'users.json'),
+    SUBJECTS_FILE: path.join(__dirname, 'data', 'subjects.json'),
+    EXAMS_FILE: path.join(__dirname, 'data', 'exams.json'),
+    LIBRARY_FILE: path.join(__dirname, 'data', 'library.json'),
     BOOKS_DIR: path.join(__dirname, 'data', 'books'),
     
     MAX_FILE_SIZE: 50 * 1024 * 1024,
@@ -20,7 +23,8 @@ module.exports = {
         BONUS: 10,
         BOOK_UPLOAD: 100,
         DAILY_GOAL: 50,
-        SCHEDULE_COMPLETE: 200
+        SCHEDULE_COMPLETE: 200,
+        TASK_COMPLETE: 20
     },
     
     SUBJECTS: {
@@ -42,23 +46,22 @@ module.exports = {
         'Drawing': '🎨', 'Music': '🎵'
     },
     
-    // Daily schedule template
     DAILY_SCHEDULE: {
         morning: {
             time: '6:00 - 8:00',
-            activities: ['Wake up & Morning Review', 'Study hardest subject', 'Practice questions']
+            activities: ['🌅 Wake up & Morning Review', '📚 Study hardest subject', '✍️ Practice questions']
         },
         midday: {
             time: '10:00 - 12:00',
-            activities: ['Study second hardest subject', 'Take notes', 'Review flashcards']
+            activities: ['📖 Study second hardest subject', '📝 Take notes', '🔄 Review flashcards']
         },
         afternoon: {
             time: '14:00 - 16:00',
-            activities: ['Practice exams', 'Solve problems', 'Group study']
+            activities: ['📝 Practice exams', '🧮 Solve problems', '👥 Group study']
         },
         evening: {
             time: '19:00 - 21:00',
-            activities: ['Review what you learned', 'Plan next day', 'Light revision']
+            activities: ['📖 Review what you learned', '📅 Plan next day', '📝 Light revision']
         }
     }
 };
