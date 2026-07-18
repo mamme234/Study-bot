@@ -9,8 +9,6 @@ class BookProcessor {
         this.processedDir = path.join(this.booksDir, 'processed');
         this.chunksDir = path.join(this.booksDir, 'chunks');
         this.tempDir = './temp';
-        
-        // Ensure all directories exist
         this.ensureDirectories();
     }
 
@@ -20,7 +18,6 @@ class BookProcessor {
             await fs.ensureDir(this.processedDir);
             await fs.ensureDir(this.chunksDir);
             await fs.ensureDir(this.tempDir);
-            console.log('✅ Book directories ensured');
         } catch (error) {
             console.error('Error ensuring book directories:', error);
         }
@@ -33,10 +30,8 @@ class BookProcessor {
             const savedFilename = `${userId}_${fileHash}${ext}`;
             const filePath = path.join(this.booksDir, savedFilename);
             
-            // Save file
             await fs.writeFile(filePath, fileBuffer);
 
-            // Extract text based on file type
             let text = '';
             try {
                 if (ext === '.pdf') {
@@ -53,22 +48,17 @@ class BookProcessor {
                     return { error: `Unsupported file format: ${ext}` };
                 }
             } catch (error) {
-                console.error('Extraction error:', error);
                 return { error: `Error extracting text: ${error.message}` };
             }
 
             if (!text || text.length < 100) {
-                return { error: 'Could not extract sufficient text from the book. Please make sure the file is readable.' };
+                return { error: 'Could not extract sufficient text from the book.' };
             }
 
-            // Chunk text
             const chunks = this.chunkText(text);
-
-            // Save chunks
             const chunksPath = path.join(this.chunksDir, `${userId}_${fileHash}_chunks.json`);
             await fs.writeJson(chunksPath, chunks, { spaces: 2 });
 
-            // Create metadata
             const metadata = {
                 userId,
                 fileHash,
@@ -84,7 +74,6 @@ class BookProcessor {
                 processed: true
             };
 
-            // Save metadata
             await this.saveBookMetadata(userId, metadata);
 
             return {
@@ -135,22 +124,17 @@ class BookProcessor {
 
     async extractEPUB(filePath) {
         try {
-            // For EPUB, try to read as text first
             try {
                 const content = await fs.readFile(filePath, 'utf-8');
                 if (content && content.length > 100) {
                     return content.replace(/<[^>]+>/g, ' ');
                 }
-            } catch (e) {
-                // If not text, try zip extraction
-            }
+            } catch (e) {}
             
-            // Try using adm-zip
             try {
                 const AdmZip = require('adm-zip');
                 const zip = new AdmZip(filePath);
                 let text = '';
-                
                 const entries = zip.getEntries();
                 for (const entry of entries) {
                     if (entry.entryName.endsWith('.html') || 
@@ -160,19 +144,13 @@ class BookProcessor {
                             const content = entry.getData().toString('utf-8');
                             const cleanContent = content.replace(/<[^>]+>/g, ' ');
                             text += cleanContent + '\n\n';
-                        } catch (e) {
-                            // Skip this entry
-                        }
+                        } catch (e) {}
                     }
                 }
-                
                 if (text && text.length > 100) {
                     return text;
                 }
-            } catch (e) {
-                console.error('EPUB zip extraction error:', e);
-            }
-            
+            } catch (e) {}
             return '';
         } catch (error) {
             console.error('EPUB extraction error:', error);
@@ -183,7 +161,6 @@ class BookProcessor {
     async extractMD(filePath) {
         try {
             let content = await fs.readFile(filePath, 'utf-8');
-            // Remove markdown formatting
             content = content.replace(/#{1,6}\s+/g, '');
             content = content.replace(/\*\*([^*]+)\*\*/g, '$1');
             content = content.replace(/\*([^*]+)\*/g, '$1');
@@ -218,7 +195,6 @@ class BookProcessor {
             chunks.push(currentChunk.trim());
         }
 
-        // If no chunks or very few, split by sentences
         if (chunks.length < 3) {
             const sentences = text.match(/[^.!?]+[.!?]+/g) || [text];
             chunks.length = 0;
@@ -257,7 +233,6 @@ class BookProcessor {
 
     async getUserBooks(userId) {
         const bookDataPath = path.join(this.processedDir, `${userId}_books.json`);
-        
         try {
             if (await fs.pathExists(bookDataPath)) {
                 return await fs.readJson(bookDataPath);
@@ -270,7 +245,6 @@ class BookProcessor {
 
     async getBookChunks(userId, fileHash) {
         const chunksPath = path.join(this.chunksDir, `${userId}_${fileHash}_chunks.json`);
-        
         try {
             if (await fs.pathExists(chunksPath)) {
                 return await fs.readJson(chunksPath);
