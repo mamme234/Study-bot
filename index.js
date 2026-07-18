@@ -2,6 +2,7 @@ require('dotenv').config();
 const TelegramBot = require('node-telegram-bot-api');
 const fs = require('fs-extra');
 const path = require('path');
+const http = require('http');
 
 // Import all modules
 const config = require('./config');
@@ -42,14 +43,12 @@ const ensureDirectories = async () => {
 };
 ensureDirectories();
 
-console.log(`🤖 ${config.BOT_NAME} v${config.BOT_VERSION} is running...`);
-console.log(`📁 Data directory: ${config.DATA_DIR}`);
-console.log(`📚 Books directory: ${config.BOOKS_DIR}`);
-
 // Global storage for temporary data
 global.tempFileData = {};
 global.activeQuiz = {};
+global.activeAsk = {};
 global.registrationState = {};
+global.waitingForHours = {};
 
 // ============ COMMAND HANDLERS ============
 
@@ -541,6 +540,7 @@ ${preview.substring(0, 1500)}${preview.length > 1500 ? '...' : ''}
 
         else if (data.startsWith('book_ask_')) {
             const bookHash = data.replace('book_ask_', '');
+            const book = await bookProcessor.getBookByHash(userId, bookHash);
             global.activeAsk[userId] = { bookHash };
             
             await bot.editMessageText(
@@ -554,7 +554,7 @@ Type your question naturally, for example:
 
 I'll find the answer in your uploaded book!
 
-📚 *Book: ${await bookProcessor.getBookByHash(userId, bookHash).then(b => b?.originalFilename || 'Unknown')}*`,
+📚 *Book: ${book?.originalFilename || 'Unknown'}*`,
                 {
                     chat_id: chatId,
                     message_id: messageId,
@@ -970,57 +970,6 @@ Reward: +${config.XP.DAILY_GOAL} XP
                     text = `🤖 **${subject} AI Teacher**\n\nType any question about ${subject} and I'll explain it!`;
                     break;
 
-                case 'assignments':
-                    text = `📄 **${subject} Assignments**\n\nAssignments will appear here.\n\n💡 *Upload your textbook for personalized assignments!*`;
-                    break;
-
-                case 'practice_exams':
-                    const grade = database.getUser(userId)?.grade || 8;
-                    text = `🧪 **${subject} Practice Exams**\n\n`;
-                    const examData = exams.getExamsForGrade(grade);
-                    if (examData) {
-                        text += `📝 Worksheets: ${Object.keys(examData.worksheets || {}).length}\n`;
-                        text += `📋 Tests: ${Object.keys(examData.tests || {}).length}\n`;
-                        text += `📊 Midterm: ${examData.midterm ? 'Available' : 'Not available'}\n`;
-                        text += `📈 Final: ${examData.final ? 'Available' : 'Not available'}\n`;
-                    }
-                    text += '\n💡 *Generate more practice by uploading your textbook!*';
-                    break;
-
-                case 'important_questions':
-                    text = `⭐ **${subject} Important Questions**\n\n`;
-                    const importantQs = [
-                        `What are the key concepts in ${subject}?`,
-                        `Explain the main theories in ${subject}.`,
-                        `What are the common mistakes students make in ${subject}?`,
-                        `How is ${subject} applied in real life?`
-                    ];
-                    importantQs.forEach((q, i) => {
-                        text += `${i + 1}. ${q}\n`;
-                    });
-                    text += '\n💡 *Upload your textbook for more specific questions!*';
-                    break;
-
-                case 'progress':
-                    const progress = gamification.getProgress(userId);
-                    if (progress) {
-                        const subjectProgress = progress.progress[subject] || { lessonsCompleted: 0, quizAvg: 0 };
-                        text = `📊 **${subject} Progress**\n\n`;
-                        text += `📖 Lessons Completed: ${subjectProgress.lessonsCompleted || 0}\n`;
-                        text += `📝 Quiz Average: ${subjectProgress.quizAvg || 0}%\n`;
-                        text += `⭐ XP Earned: ${subjectProgress.xpEarned || 0}\n`;
-                    }
-                    break;
-
-                case 'revision_plans':
-                    text = `🎯 **${subject} Revision Plan**\n\n`;
-                    text += `📅 **Week 1:** Review basics and key concepts\n`;
-                    text += `📅 **Week 2:** Practice exercises and problems\n`;
-                    text += `📅 **Week 3:** Advanced topics and applications\n`;
-                    text += `📅 **Week 4:** Full revision and practice tests\n\n`;
-                    text += `💡 *Generate a personalized plan by uploading your textbook!*`;
-                    break;
-
                 default:
                     text = `📚 **${subject}**\n\nFeature coming soon!`;
             }
@@ -1408,34 +1357,57 @@ bot.on('error', (error) => {
 // ============ PROACTIVE COACH (Optional) ============
 
 // Check for inactive users every 24 hours
-const cron = require('node-cron');
-cron.schedule('0 9 * * *', async () => {
-    console.log('🔄 Running proactive checks...');
-    
-    const inactiveUsers = proactiveCoach.checkInactiveUsers();
-    for (const user of inactiveUsers) {
-        try {
-            const message = proactiveCoach.getInactivityMessage(user, user.daysOff);
-            await bot.sendMessage(user.userId, message, { parse_mode: 'Markdown' });
-            console.log(`📨 Sent inactivity message to ${user.name}`);
-        } catch (error) {
-            console.error('Error sending proactive message:', error);
-        }
-    }
-
-    // Send exam countdowns
-    const users = database.users;
-    for (const [userId, user] of Object.entries(users)) {
-        try {
-            const countdown = proactiveCoach.getExamCountdownMessage(user);
-            if (countdown) {
-                await bot.sendMessage(userId, countdown, { parse_mode: 'Markdown' });
-                console.log(`📨 Sent exam countdown to ${user.name}`);
+try {
+    const cron = require('node-cron');
+    cron.schedule('0 9 * * *', async () => {
+        console.log('🔄 Running proactive checks...');
+        
+        const inactiveUsers = proactiveCoach.checkInactiveUsers();
+        for (const user of inactiveUsers) {
+            try {
+                const message = proactiveCoach.getInactivityMessage(user, user.daysOff);
+                await bot.sendMessage(user.userId, message, { parse_mode: 'Markdown' });
+                console.log(`📨 Sent inactivity message to ${user.name}`);
+            } catch (error) {
+                console.error('Error sending proactive message:', error);
             }
-        } catch (error) {
-            console.error('Error sending exam countdown:', error);
         }
-    }
+
+        // Send exam countdowns
+        const users = database.users;
+        for (const [userId, user] of Object.entries(users)) {
+            try {
+                const countdown = proactiveCoach.getExamCountdownMessage(user);
+                if (countdown) {
+                    await bot.sendMessage(userId, countdown, { parse_mode: 'Markdown' });
+                    console.log(`📨 Sent exam countdown to ${user.name}`);
+                }
+            } catch (error) {
+                console.error('Error sending exam countdown:', error);
+            }
+        }
+    });
+} catch (e) {
+    console.log('⚠️ Proactive features disabled (node-cron not available)');
+}
+
+// ============ HTTP SERVER FOR RENDER ============
+
+// Create a simple HTTP server to keep Render happy
+const server = http.createServer((req, res) => {
+    res.writeHead(200, { 'Content-Type': 'text/plain' });
+    res.end('🤖 A+ Coach Bot is running!');
 });
 
+// Get port from environment or use default
+const PORT = process.env.PORT || 3000;
+
+server.listen(PORT, () => {
+    console.log(`✅ HTTP server running on port ${PORT}`);
+    console.log(`🤖 ${config.BOT_NAME} v${config.BOT_VERSION} is running...`);
+    console.log(`📁 Data directory: ${config.DATA_DIR}`);
+    console.log(`📚 Books directory: ${config.BOOKS_DIR}`);
+});
+
+// Keep the bot polling alive
 console.log('✅ All handlers registered. Bot is ready!');
