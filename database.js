@@ -27,6 +27,7 @@ class Database {
         try {
             fs.ensureDirSync(path.dirname(this.usersFile));
             fs.writeJsonSync(this.usersFile, this.users, { spaces: 2 });
+            console.log('✅ Users saved successfully');
         } catch (error) {
             console.error('Error saving users:', error);
         }
@@ -84,95 +85,184 @@ class Database {
     }
 
     createUser(userId, name, language, grade, stream = null, goal = null) {
-        const subjects = this.getSubjects(grade, stream);
-        const user = {
-            name,
-            language,
-            grade,
-            gradeType: this.getGradeType(grade),
-            stream,
-            subjects,
-            goal,
-            xp: 0,
-            level: 1,
-            streak: 0,
-            lastActive: new Date().toISOString(),
-            completedLessons: [],
-            quizScores: [],
-            dailyGoal: { lessons: 2, quiz: 15, hours: 1 },
-            progress: {},
-            books: [],
-            schedule: null,
-            settings: {
-                notifications: true,
-                language,
-                reminderTime: '16:00'
+        try {
+            const userIdStr = String(userId);
+            
+            // Check if user already exists
+            if (this.users[userIdStr]) {
+                console.log(`User ${userIdStr} already exists, updating...`);
+                return this.users[userIdStr];
             }
-        };
 
-        // Initialize progress for each subject
-        subjects.forEach(subject => {
-            user.progress[subject] = {
-                lessonsCompleted: 0,
-                quizAvg: 0,
-                xpEarned: 0
+            const subjects = this.getSubjects(grade, stream);
+            
+            // Initialize progress object
+            const progress = {};
+            subjects.forEach(subject => {
+                progress[subject] = {
+                    lessonsCompleted: 0,
+                    quizAvg: 0,
+                    xpEarned: 0
+                };
+            });
+
+            const user = {
+                name: name || 'Student',
+                language: language || 'English',
+                grade: grade,
+                gradeType: this.getGradeType(grade),
+                stream: stream || null,
+                subjects: subjects,
+                goal: goal || 'Pass exams',
+                xp: 0,
+                level: 1,
+                streak: 0,
+                lastActive: new Date().toISOString(),
+                completedLessons: [],
+                quizScores: [],
+                dailyGoal: { lessons: 2, quiz: 15, hours: 1 },
+                progress: progress,
+                books: [],
+                schedule: null,
+                settings: {
+                    notifications: true,
+                    language: language || 'English',
+                    reminderTime: '16:00'
+                }
             };
-        });
 
-        this.users[String(userId)] = user;
-        this.saveData();
-        return user;
+            this.users[userIdStr] = user;
+            this.saveData();
+            console.log(`✅ User created: ${name} (${userIdStr})`);
+            return user;
+
+        } catch (error) {
+            console.error('Error creating user:', error);
+            // Return a default user to prevent crashes
+            return {
+                name: name || 'Student',
+                language: language || 'English',
+                grade: grade || 8,
+                stream: stream || null,
+                subjects: ['Mathematics', 'English'],
+                xp: 0,
+                level: 1,
+                streak: 0,
+                progress: {},
+                settings: { notifications: true, language: 'English', reminderTime: '16:00' }
+            };
+        }
     }
 
     getUser(userId) {
-        return this.users[String(userId)] || null;
+        try {
+            const userIdStr = String(userId);
+            return this.users[userIdStr] || null;
+        } catch (error) {
+            console.error('Error getting user:', error);
+            return null;
+        }
     }
 
     updateUser(userId, data) {
-        const id = String(userId);
-        if (this.users[id]) {
-            this.users[id] = { ...this.users[id], ...data };
-            this.saveData();
-            return true;
+        try {
+            const id = String(userId);
+            if (this.users[id]) {
+                this.users[id] = { ...this.users[id], ...data };
+                this.saveData();
+                return true;
+            }
+            return false;
+        } catch (error) {
+            console.error('Error updating user:', error);
+            return false;
         }
-        return false;
     }
 
     getLeaderboard(limit = 10) {
-        return Object.entries(this.users)
-            .map(([id, user]) => ({ id, ...user }))
-            .sort((a, b) => b.xp - a.xp)
-            .slice(0, limit);
+        try {
+            return Object.entries(this.users)
+                .map(([id, user]) => ({ id, ...user }))
+                .sort((a, b) => (b.xp || 0) - (a.xp || 0))
+                .slice(0, limit);
+        } catch (error) {
+            console.error('Error getting leaderboard:', error);
+            return [];
+        }
     }
 
     saveSchedule(userId, schedule) {
-        const id = String(userId);
-        if (this.users[id]) {
-            this.users[id].schedule = schedule;
-            this.saveData();
-            return true;
+        try {
+            const id = String(userId);
+            if (this.users[id]) {
+                this.users[id].schedule = schedule;
+                this.saveData();
+                return true;
+            }
+            return false;
+        } catch (error) {
+            console.error('Error saving schedule:', error);
+            return false;
         }
-        return false;
     }
 
     getSchedule(userId) {
-        const user = this.getUser(userId);
-        return user ? user.schedule : null;
+        try {
+            const user = this.getUser(userId);
+            return user ? user.schedule : null;
+        } catch (error) {
+            console.error('Error getting schedule:', error);
+            return null;
+        }
     }
 
     addBookToUser(userId, bookData) {
-        const id = String(userId);
-        if (this.users[id]) {
-            this.users[id].books.push(bookData);
-            this.saveData();
-            return true;
+        try {
+            const id = String(userId);
+            if (this.users[id]) {
+                if (!this.users[id].books) {
+                    this.users[id].books = [];
+                }
+                this.users[id].books.push(bookData);
+                this.saveData();
+                return true;
+            }
+            return false;
+        } catch (error) {
+            console.error('Error adding book:', error);
+            return false;
         }
-        return false;
     }
 
     getBooks(userId) {
-        const user = this.getUser(userId);
-        return user ? user.books : [];
+        try {
+            const user = this.getUser(userId);
+            return user ? user.books || [] : [];
+        } catch (error) {
+            console.error('Error getting books:', error);
+            return [];
+        }
+    }
+
+    // Reset user (for testing)
+    resetUser(userId) {
+        try {
+            const id = String(userId);
+            if (this.users[id]) {
+                delete this.users[id];
+                this.saveData();
+                return true;
+            }
+            return false;
+        } catch (error) {
+            console.error('Error resetting user:', error);
+            return false;
+        }
+    }
+
+    // Get all users (for admin)
+    getAllUsers() {
+        return this.users;
     }
 }
 
