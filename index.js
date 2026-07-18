@@ -12,6 +12,7 @@ const AITeacher = require('./aiTeacher');
 const ProactiveCoach = require('./proactive');
 const gamification = require('./gamification');
 const bookProcessor = require('./bookProcessor');
+const scheduleGenerator = require('./scheduleGenerator');
 
 // ============ INITIALIZE ============
 const bot = new TelegramBot(config.BOT_TOKEN, { polling: true });
@@ -316,9 +317,8 @@ bot.on('callback_query', async (callbackQuery) => {
                 const lang = data.replace('lang_', '');
                 console.log(`📝 Language selected: ${lang} for user ${userId}`);
                 
-                if (!global.regState[userId]) {
-                    global.regState[userId] = {};
-                }
+                if (!global.regState) global.regState = {};
+                if (!global.regState[userId]) global.regState[userId] = {};
                 global.regState[userId].language = lang;
 
                 const { text, keyboard } = Menu.gradeMenu();
@@ -349,9 +349,8 @@ bot.on('callback_query', async (callbackQuery) => {
                 const grade = isNaN(gradeStr) ? gradeStr : parseInt(gradeStr);
                 console.log(`📝 Grade selected: ${grade} for user ${userId}`);
 
-                if (!global.regState[userId]) {
-                    global.regState[userId] = {};
-                }
+                if (!global.regState) global.regState = {};
+                if (!global.regState[userId]) global.regState[userId] = {};
                 global.regState[userId].grade = grade;
 
                 if (typeof grade === 'number' && grade >= 11) {
@@ -1624,24 +1623,21 @@ bot.on('callback_query', async (callbackQuery) => {
     }
 });
 
-// ============ REMINDER CRON JOBS ============
+// ============ CRON JOBS ============
 
-// Check reminders every minute
+// Reminders every minute
 cron.schedule('* * * * *', async () => {
     try {
-        const dueReminders = proactive.checkReminders();
-        for (const reminder of dueReminders) {
-            try {
-                const message = proactive.formatReminderMessage(reminder.userId, reminder);
-                await bot.sendMessage(reminder.userId, message, { parse_mode: 'Markdown' });
-                console.log(`📨 Sent reminder to ${reminder.name}`);
-            } catch (e) {
-                console.error('Reminder send error:', e);
+        if (typeof proactive.checkReminders === 'function') {
+            const dueReminders = proactive.checkReminders();
+            for (const reminder of dueReminders) {
+                try {
+                    const msg = proactive.formatReminderMessage(reminder.userId, reminder);
+                    await bot.sendMessage(reminder.userId, msg, { parse_mode: 'Markdown' });
+                } catch (e) {}
             }
         }
-    } catch (e) {
-        console.error('Cron error:', e);
-    }
+    } catch (e) {}
 });
 
 // Inactivity check daily at 9 AM
@@ -1652,13 +1648,10 @@ cron.schedule('0 9 * * *', async () => {
             const days = Math.floor((Date.now() - new Date(user.lastActive)) / (1000 * 60 * 60 * 24));
             if (days >= 2) {
                 const msg = proactive.getInactivityMessage({ ...user, inactiveDays: days });
-                await bot.sendMessage(userId, msg, { parse_mode: 'Markdown' });
-                console.log(`📨 Sent inactivity alert to ${user.name}`);
+                await bot.sendMessage(userId, msg, { parse_mode: 'Markdown' }).catch(() => {});
             }
         }
-    } catch (e) {
-        console.error('Inactivity check error:', e);
-    }
+    } catch (e) {}
 });
 
 // Exam countdown daily at 8 AM
@@ -1668,13 +1661,10 @@ cron.schedule('0 8 * * *', async () => {
         for (const [userId, user] of Object.entries(users)) {
             const msg = proactive.getExamCountdown(user);
             if (msg) {
-                await bot.sendMessage(userId, msg, { parse_mode: 'Markdown' });
-                console.log(`📨 Sent exam countdown to ${user.name}`);
+                await bot.sendMessage(userId, msg, { parse_mode: 'Markdown' }).catch(() => {});
             }
         }
-    } catch (e) {
-        console.error('Exam countdown error:', e);
-    }
+    } catch (e) {}
 });
 
 // ============ HTTP SERVER ============
