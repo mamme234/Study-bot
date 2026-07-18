@@ -27,7 +27,7 @@ class ScheduleGenerator {
             };
         }
 
-        // Extract topics from all books
+        // Extract topics from books
         let allTopics = [];
         for (const book of books) {
             const chunks = await this.bookProcessor.getBookChunks(userId, book.fileHash);
@@ -39,12 +39,12 @@ class ScheduleGenerator {
 
         if (!allTopics || allTopics.length === 0) {
             return {
-                error: '⚠️ Could not extract topics from your books. Try uploading a different book.',
+                error: '⚠️ Could not extract topics from your books.',
                 needsBooks: true
             };
         }
 
-        const schedule = this.createSchedule(user, allTopics, studyHoursPerDay, books);
+        const schedule = this.createScheduleWithTasks(user, allTopics, studyHoursPerDay, books);
         return schedule;
     }
 
@@ -55,7 +55,6 @@ class ScheduleGenerator {
         const chapterPatterns = [
             /(?:Chapter|CHAPTER|Ch\.|ch\.)\s+(\d+)[\s:.-]+(.+)/,
             /(?:Unit|UNIT|U\.)\s+(\d+)[\s:.-]+(.+)/,
-            /(?:Module|MODULE)\s+(\d+)[\s:.-]+(.+)/,
             /^([A-Z][A-Z\s]{2,20})$/,
             /^(\d+\.\s+[A-Z][a-z\s]+)/
         ];
@@ -107,7 +106,6 @@ class ScheduleGenerator {
             }
         }
 
-        // If no topics found, create from chunks
         if (topics.length === 0) {
             for (let i = 0; i < Math.min(15, chunks.length); i++) {
                 const chunk = chunks[i];
@@ -142,12 +140,13 @@ class ScheduleGenerator {
         return 'Hard';
     }
 
-    createSchedule(user, topics, studyHoursPerDay, books) {
+    createScheduleWithTasks(user, topics, studyHoursPerDay, books) {
         const difficultyOrder = { Hard: 0, Medium: 1, Easy: 2 };
         topics.sort((a, b) => difficultyOrder[a.difficulty] - difficultyOrder[b.difficulty]);
 
         const weeks = [];
         const topicsPerWeek = Math.max(1, Math.ceil(topics.length / 6));
+        const dailyTasks = [];
 
         for (let week = 0; week < Math.min(8, Math.ceil(topics.length / topicsPerWeek)); week++) {
             const weekTopics = topics.slice(week * topicsPerWeek, (week + 1) * topicsPerWeek);
@@ -157,17 +156,26 @@ class ScheduleGenerator {
             for (let day = 0; day < 7; day++) {
                 if (day < weekTopics.length) {
                     const topic = weekTopics[day];
+                    const tasks = [
+                        `📖 Read: ${topic.title}`,
+                        '📝 Take notes on key concepts',
+                        '❓ Answer practice questions',
+                        '🔄 Review and summarize'
+                    ];
+                    
+                    // Add to daily tasks
+                    dailyTasks.push({
+                        day: `Week ${week + 1}, Day ${day + 1}`,
+                        topic: topic.title,
+                        tasks: tasks
+                    });
+
                     days.push({
                         day: `Week ${week + 1}, Day ${day + 1}`,
                         topic: topic.title,
                         difficulty: topic.difficulty || 'Medium',
                         time: `${topic.estimatedTime || 30} minutes`,
-                        tasks: [
-                            `📖 Read: ${topic.title}`,
-                            '📝 Take notes on key concepts',
-                            '❓ Answer practice questions',
-                            '🔄 Review and summarize'
-                        ]
+                        tasks: tasks
                     });
                 } else {
                     days.push({
@@ -191,6 +199,27 @@ class ScheduleGenerator {
             });
         }
 
+        // Save daily tasks to user
+        if (dailyTasks.length > 0) {
+            const userTasks = user.dailyTasks || [];
+            const today = new Date().toDateString();
+            
+            // Only add if not already added today
+            const existingToday = userTasks.filter(t => 
+                new Date(t.date).toDateString() === today
+            );
+            
+            if (existingToday.length === 0) {
+                // Add first 5 tasks as daily tasks
+                const firstTasks = dailyTasks.slice(0, 5);
+                for (const task of firstTasks) {
+                    this.db.addDailyTask(user.id, 
+                        `${task.day}: ${task.topic} - ${task.tasks[0]}`
+                    );
+                }
+            }
+        }
+
         return {
             userName: user.name || 'Student',
             grade: user.grade,
@@ -198,6 +227,7 @@ class ScheduleGenerator {
             totalTopics: topics.length,
             studyHoursPerDay,
             weeks,
+            dailyTasks: dailyTasks.slice(0, 7),
             booksUsed: books.map(b => b.originalFilename || 'Unknown'),
             generatedFromBooks: true,
             generatedAt: new Date().toISOString()
@@ -224,6 +254,23 @@ class ScheduleGenerator {
 
         text += '\n' + '='.repeat(50) + '\n\n';
 
+        text += '✅ **What You Must Do Each Day**\n\n';
+
+        // Show daily tasks
+        if (schedule.dailyTasks && schedule.dailyTasks.length > 0) {
+            schedule.dailyTasks.forEach((task, index) => {
+                text += `📌 **${task.day}**\n`;
+                text += `📖 Topic: ${task.topic}\n`;
+                text += `📝 Tasks:\n`;
+                task.tasks.forEach(t => {
+                    text += `   • ${t}\n`;
+                });
+                text += '\n';
+            });
+        }
+
+        text += '='.repeat(50) + '\n\n';
+
         for (const week of schedule.weeks) {
             text += `
 📌 **Week ${week.week}**
@@ -247,12 +294,14 @@ ${day.day}
         }
 
         text += `
-💡 **Study Tips:**
-• Study in 45-minute sessions with 10-minute breaks
-• Review previous topics before starting new ones
-• Use the AI Teacher for difficult concepts
-• Track your progress daily
-• Stay consistent – small steps lead to big results!
+💡 **Daily Study Tips:**
+• 🌅 Morning: Study your hardest subject first
+• 📚 Midday: Take notes and review
+• 🌤️ Afternoon: Practice problems
+• 🌙 Evening: Review and plan next day
+• ⏰ Study in 45-minute sessions with 10-minute breaks
+• 📝 Complete all daily tasks for bonus XP!
+• 🔄 Review previous topics weekly
 
 📅 *This schedule is generated from your uploaded book.*
 `;
