@@ -1,0 +1,2 @@
+# Stores book text chunks
+# Format: {userId}_{fileHash}_chunks.json
