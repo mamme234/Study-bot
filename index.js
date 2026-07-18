@@ -4,7 +4,7 @@ const fs = require('fs-extra');
 const path = require('path');
 const http = require('http');
 
-// Import all modules
+// ============ IMPORTS ============
 const config = require('./config');
 const database = require('./database');
 const Menu = require('./menu');
@@ -18,6 +18,30 @@ const Gamification = require('./gamification');
 const ProactiveCoach = require('./proactive');
 const translations = require('./translations');
 
+// ============ INITIALIZATION ============
+
+// Ensure directories exist
+const ensureDirectories = async () => {
+    const dirs = [
+        './temp',
+        './data',
+        './data/books',
+        './data/books/processed',
+        './data/books/chunks'
+    ];
+    
+    for (const dir of dirs) {
+        try {
+            await fs.ensureDir(dir);
+            console.log(`✅ Directory ensured: ${dir}`);
+        } catch (error) {
+            console.error(`❌ Error creating directory ${dir}:`, error);
+        }
+    }
+};
+
+ensureDirectories();
+
 // Initialize bot
 const bot = new TelegramBot(config.BOT_TOKEN, { polling: true });
 
@@ -27,28 +51,17 @@ const gamification = new Gamification(database);
 const aiTeacher = new AITeacher(database);
 const proactiveCoach = new ProactiveCoach(database);
 
-// Ensure directories exist
-const ensureDirectories = async () => {
-    const dirs = [
-        config.DATA_DIR,
-        config.BOOKS_DIR,
-        path.join(config.BOOKS_DIR, 'processed'),
-        path.join(config.BOOKS_DIR, 'chunks'),
-        './temp'
-    ];
-    
-    for (const dir of dirs) {
-        await fs.ensureDir(dir);
-    }
-};
-ensureDirectories();
+console.log(`🤖 ${config.BOT_NAME} v${config.BOT_VERSION} is running...`);
+console.log(`📁 Data directory: ${config.DATA_DIR}`);
+console.log(`📚 Books directory: ${config.BOOKS_DIR}`);
 
-// Global storage for temporary data
+// Global storage
 global.tempFileData = {};
 global.activeQuiz = {};
 global.activeAsk = {};
 global.registrationState = {};
 global.waitingForHours = {};
+global.testSessions = {};
 
 // ============ COMMAND HANDLERS ============
 
@@ -61,6 +74,12 @@ bot.onText(/\/start/, async (msg) => {
         let user = database.getUser(userId);
 
         if (user) {
+            // Send welcome from Mr. M
+            await bot.sendMessage(chatId, 
+                `🧑‍🏫 **Hello ${user.name}!**\n\nI'm **Mr. M**, your personal AI Teacher and Exam Coach.\n\nI'm here to help you master every subject and ace your exams! 📚✨\n\nLet's get started!`,
+                { parse_mode: 'Markdown' }
+            );
+            
             const { text, keyboard } = Menu.mainMenu(user);
             await bot.sendMessage(chatId, text, {
                 parse_mode: 'Markdown',
@@ -68,9 +87,11 @@ bot.onText(/\/start/, async (msg) => {
             });
         } else {
             await bot.sendMessage(chatId,
-                `👋 Welcome to **A+ Coach**!
+                `🧑‍🏫 **Welcome to A+ Coach!**
 
-🇪🇹 Your personal exam preparation assistant for Ethiopian students.
+I'm **Mr. M**, your personal AI Teacher.
+
+🇪🇹 I'm here to help Ethiopian students excel in their studies.
 
 What's your name?`,
                 { parse_mode: 'Markdown' }
@@ -88,34 +109,101 @@ bot.onText(/\/help/, async (msg) => {
     const chatId = msg.chat.id;
     
     const helpText = `
-📚 **A+ Coach Help**
+🧑‍🏫 **Mr. M's Help Guide**
 
 **Commands:**
-• /start - Start the bot
-• /help - Show this help
+• /start - Start or restart
+• /help - Show this guide
 • /menu - Show main menu
+• /test - Start a practice test
+• /quiz - Quick quiz
 • /cancel - Cancel current operation
 
-**Features:**
-• 📚 Study all subjects
-• 📝 Practice exams
-• 📖 Upload your textbooks
-• 📅 Get personalized schedule
-• 🤖 AI Teacher for help
+**What I Can Do:**
+• 📚 Teach any subject (Grade 1-12)
+• 📝 Create custom tests and quizzes
+• 📖 Learn from your uploaded books
+• 📅 Generate study schedules
 • 📊 Track your progress
-• 🏆 Compete on leaderboard
+• 🏆 Help you earn XP and level up!
 
-**How to use:**
-1. Upload your textbook
-2. AI will extract topics
-3. Generate personalized schedule
-4. Study with AI assistance
-5. Track your progress
+**Quick Tips:**
+• Upload your textbook for personalized learning
+• Type "test me on [subject]" for a test
+• Ask me anything about your subjects
 
 💡 *Just type your questions naturally!*
 `;
 
     await bot.sendMessage(chatId, helpText, { parse_mode: 'Markdown' });
+});
+
+// /test command - Start a test
+bot.onText(/\/test/, async (msg) => {
+    const chatId = msg.chat.id;
+    const userId = msg.from.id;
+    const user = database.getUser(userId);
+
+    if (!user) {
+        await bot.sendMessage(chatId, 'Please start with /start first!');
+        return;
+    }
+
+    const subjects = user.subjects || ['Mathematics', 'English'];
+    const keyboard = subjects.map(subject => {
+        const emoji = Menu.getEmoji(subject);
+        return [{ text: `${emoji} ${subject}`, callback_data: `test_subject_${subject}` }];
+    });
+    keyboard.push([{ text: '🔙 Back', callback_data: 'main_menu' }]);
+
+    await bot.sendMessage(chatId,
+        `🧑‍🏫 **Mr. M's Test Generator**
+
+Choose a subject for your test:
+
+📝 I'll create a personalized test with:
+• Multiple choice questions
+• Short answer questions
+• Problems to solve
+
+*Based on your grade level and uploaded books!*`,
+        {
+            parse_mode: 'Markdown',
+            reply_markup: { inline_keyboard: keyboard }
+        }
+    );
+});
+
+// /quiz command
+bot.onText(/\/quiz/, async (msg) => {
+    const chatId = msg.chat.id;
+    const userId = msg.from.id;
+    const user = database.getUser(userId);
+
+    if (!user) {
+        await bot.sendMessage(chatId, 'Please start with /start first!');
+        return;
+    }
+
+    const subjects = user.subjects || ['Mathematics', 'English'];
+    const keyboard = subjects.map(subject => {
+        const emoji = Menu.getEmoji(subject);
+        return [{ text: `${emoji} ${subject}`, callback_data: `quiz_subject_${subject}` }];
+    });
+    keyboard.push([{ text: '🔙 Back', callback_data: 'main_menu' }]);
+
+    await bot.sendMessage(chatId,
+        `🧑‍🏫 **Mr. M's Quick Quiz**
+
+Choose a subject for a 5-question quiz:
+
+⚡ Quick questions to test your knowledge!
+📊 Get instant feedback and XP!`,
+        {
+            parse_mode: 'Markdown',
+            reply_markup: { inline_keyboard: keyboard }
+        }
+    );
 });
 
 // /menu command
@@ -142,11 +230,15 @@ bot.onText(/\/cancel/, async (msg) => {
 
     delete global.tempFileData[userId];
     delete global.registrationState[userId];
+    delete global.testSessions[userId];
 
     const user = database.getUser(userId);
     if (user) {
-        const { text, keyboard } = Menu.mainMenu(user);
         await bot.sendMessage(chatId, '✅ Operation cancelled.', {
+            parse_mode: 'Markdown'
+        });
+        const { text, keyboard } = Menu.mainMenu(user);
+        await bot.sendMessage(chatId, text, {
             parse_mode: 'Markdown',
             reply_markup: { inline_keyboard: keyboard }
         });
@@ -197,20 +289,25 @@ bot.on('callback_query', async (callbackQuery) => {
                     reply_markup: { inline_keyboard: keyboard }
                 });
             } else {
-                // Create user
                 const user = database.createUser(userId, name, language, grade);
                 delete global.registrationState[userId];
 
-                const { text, keyboard } = Menu.mainMenu(user);
-                await bot.editMessageText(
-                    `✅ Registration complete!\n\nWelcome to A+ Coach! 🎉\n\n${text}`,
-                    {
-                        chat_id: chatId,
-                        message_id: messageId,
-                        parse_mode: 'Markdown',
-                        reply_markup: { inline_keyboard: keyboard }
-                    }
+                await bot.sendMessage(chatId,
+                    `🧑‍🏫 **Welcome ${name}!**
+
+I'm **Mr. M**, your personal AI Teacher.
+
+I've created your profile for Grade ${grade}. Let's start learning! 🚀`,
+                    { parse_mode: 'Markdown' }
                 );
+
+                const { text, keyboard } = Menu.mainMenu(user);
+                await bot.editMessageText(text, {
+                    chat_id: chatId,
+                    message_id: messageId,
+                    parse_mode: 'Markdown',
+                    reply_markup: { inline_keyboard: keyboard }
+                });
             }
         }
 
@@ -223,9 +320,345 @@ bot.on('callback_query', async (callbackQuery) => {
             const user = database.createUser(userId, name, language, grade, stream);
             delete global.registrationState[userId];
 
+            await bot.sendMessage(chatId,
+                `🧑‍🏫 **Welcome ${name}!**
+
+I'm **Mr. M**, your personal AI Teacher.
+
+I've created your profile for Grade ${grade} (${stream} Stream). Let's start learning! 🚀`,
+                { parse_mode: 'Markdown' }
+            );
+
             const { text, keyboard } = Menu.mainMenu(user);
+            await bot.editMessageText(text, {
+                chat_id: chatId,
+                message_id: messageId,
+                parse_mode: 'Markdown',
+                reply_markup: { inline_keyboard: keyboard }
+            });
+        }
+
+        // ========== TEST CALLBACKS ==========
+        else if (data.startsWith('test_subject_')) {
+            const subject = data.replace('test_subject_', '');
+            const user = database.getUser(userId);
+            const grade = user?.grade || 8;
+
             await bot.editMessageText(
-                `✅ Registration complete!\n\nWelcome to A+ Coach! 🎉\n\n${text}`,
+                `🧑‍🏫 **Mr. M is generating your test...**
+
+📚 Subject: ${subject}
+📅 Grade: ${grade}
+
+⏳ Please wait...`,
+                {
+                    chat_id: chatId,
+                    message_id: messageId,
+                    parse_mode: 'Markdown'
+                }
+            );
+
+            // Generate test from AI Teacher
+            const testData = aiTeacher.generateTest(subject, grade, userId);
+            
+            if (testData.error) {
+                await bot.editMessageText(`❌ ${testData.error}`, {
+                    chat_id: chatId,
+                    message_id: messageId,
+                    parse_mode: 'Markdown'
+                });
+                return;
+            }
+
+            // Store test session
+            global.testSessions[userId] = {
+                subject,
+                questions: testData.questions,
+                currentQuestion: 0,
+                answers: [],
+                score: 0,
+                total: testData.questions.length
+            };
+
+            // Send first question
+            const q = testData.questions[0];
+            const optionsText = q.options.map((opt, i) => 
+                `${String.fromCharCode(65 + i)}. ${opt}`
+            ).join('\n');
+
+            const keyboard = q.options.map((opt, i) => {
+                return [{ text: `${String.fromCharCode(65 + i)}. ${opt.substring(0, 30)}`, callback_data: `test_answer_${i}` }];
+            });
+
+            await bot.editMessageText(
+                `🧑‍🏫 **${subject} Test - Question 1/${testData.questions.length}**
+
+${q.question}
+
+${optionsText}
+
+*Select your answer below:*`,
+                {
+                    chat_id: chatId,
+                    message_id: messageId,
+                    parse_mode: 'Markdown',
+                    reply_markup: { inline_keyboard: keyboard }
+                }
+            );
+        }
+
+        else if (data.startsWith('test_answer_')) {
+            const answerIndex = parseInt(data.replace('test_answer_', ''));
+            const session = global.testSessions[userId];
+
+            if (!session) {
+                await bot.editMessageText('❌ Test session not found. Start a new test with /test.', {
+                    chat_id: chatId,
+                    message_id: messageId
+                });
+                return;
+            }
+
+            const currentQ = session.currentQuestion;
+            const question = session.questions[currentQ];
+            
+            // Check answer
+            const isCorrect = answerIndex === question.correct;
+            if (isCorrect) session.score++;
+            
+            session.answers.push({
+                question: question.question,
+                selected: answerIndex,
+                correct: question.correct,
+                isCorrect
+            });
+
+            session.currentQuestion++;
+
+            // Check if test is complete
+            if (session.currentQuestion >= session.total) {
+                // Test complete - show results
+                const percentage = Math.round((session.score / session.total) * 100);
+                const xpEarned = percentage >= 70 ? config.XP.QUIZ + config.XP.BONUS : config.XP.QUIZ;
+                
+                // Add XP
+                gamification.addXP(userId, xpEarned, 'test');
+
+                let resultText = `
+🧑‍🏫 **Test Complete!**
+
+📚 Subject: ${session.subject}
+✅ Score: ${session.score}/${session.total} (${percentage}%)
+
+${percentage >= 80 ? '🎉 Excellent work! You\'re mastering this subject!' :
+  percentage >= 60 ? '💪 Good job! Keep practicing to improve.' :
+  '📚 Keep studying! Review your notes and try again.'}
+
+✨ +${xpEarned} XP earned!
+`;
+
+                // Show detailed results
+                resultText += '\n📝 **Detailed Results:**\n';
+                session.answers.forEach((a, i) => {
+                    const emoji = a.isCorrect ? '✅' : '❌';
+                    resultText += `\n${i+1}. ${emoji} ${a.question.substring(0, 40)}...`;
+                });
+
+                const keyboard = [
+                    [{ text: '🔄 Retake Test', callback_data: `test_subject_${session.subject}` }],
+                    [{ text: '📊 View Progress', callback_data: 'progress' }],
+                    [{ text: '🔙 Back', callback_data: 'main_menu' }]
+                ];
+
+                await bot.editMessageText(resultText, {
+                    chat_id: chatId,
+                    message_id: messageId,
+                    parse_mode: 'Markdown',
+                    reply_markup: { inline_keyboard: keyboard }
+                });
+
+                delete global.testSessions[userId];
+                return;
+            }
+
+            // Send next question
+            const q = session.questions[session.currentQuestion];
+            const optionsText = q.options.map((opt, i) => 
+                `${String.fromCharCode(65 + i)}. ${opt}`
+            ).join('\n');
+
+            const keyboard = q.options.map((opt, i) => {
+                return [{ text: `${String.fromCharCode(65 + i)}. ${opt.substring(0, 30)}`, callback_data: `test_answer_${i}` }];
+            });
+
+            await bot.editMessageText(
+                `🧑‍🏫 **${session.subject} Test - Question ${session.currentQuestion + 1}/${session.total}**
+
+${q.question}
+
+${optionsText}
+
+*Select your answer below:*`,
+                {
+                    chat_id: chatId,
+                    message_id: messageId,
+                    parse_mode: 'Markdown',
+                    reply_markup: { inline_keyboard: keyboard }
+                }
+            );
+        }
+
+        // ========== QUIZ CALLBACKS ==========
+        else if (data.startsWith('quiz_subject_')) {
+            const subject = data.replace('quiz_subject_', '');
+            const user = database.getUser(userId);
+            const grade = user?.grade || 8;
+
+            await bot.editMessageText(
+                `🧑‍🏫 **Mr. M is generating your quiz...**
+
+⚡ Quick Quiz: ${subject}
+📅 Grade: ${grade}
+
+⏳ Please wait...`,
+                {
+                    chat_id: chatId,
+                    message_id: messageId,
+                    parse_mode: 'Markdown'
+                }
+            );
+
+            const quizData = aiTeacher.generateQuiz(subject, grade, userId);
+            
+            if (quizData.error) {
+                await bot.editMessageText(`❌ ${quizData.error}`, {
+                    chat_id: chatId,
+                    message_id: messageId,
+                    parse_mode: 'Markdown'
+                });
+                return;
+            }
+
+            // Store quiz session
+            global.testSessions[userId] = {
+                subject,
+                questions: quizData.questions,
+                currentQuestion: 0,
+                answers: [],
+                score: 0,
+                total: quizData.questions.length,
+                isQuiz: true
+            };
+
+            // Send first question
+            const q = quizData.questions[0];
+            const optionsText = q.options.map((opt, i) => 
+                `${String.fromCharCode(65 + i)}. ${opt}`
+            ).join('\n');
+
+            const keyboard = q.options.map((opt, i) => {
+                return [{ text: `${String.fromCharCode(65 + i)}. ${opt.substring(0, 30)}`, callback_data: `quiz_answer_${i}` }];
+            });
+
+            await bot.editMessageText(
+                `⚡ **Quick Quiz - Question 1/${quizData.questions.length}**
+
+${q.question}
+
+${optionsText}
+
+*Select your answer:*`,
+                {
+                    chat_id: chatId,
+                    message_id: messageId,
+                    parse_mode: 'Markdown',
+                    reply_markup: { inline_keyboard: keyboard }
+                }
+            );
+        }
+
+        else if (data.startsWith('quiz_answer_')) {
+            const answerIndex = parseInt(data.replace('quiz_answer_', ''));
+            const session = global.testSessions[userId];
+
+            if (!session || !session.isQuiz) {
+                await bot.editMessageText('❌ Quiz session not found. Start a new quiz with /quiz.', {
+                    chat_id: chatId,
+                    message_id: messageId
+                });
+                return;
+            }
+
+            const currentQ = session.currentQuestion;
+            const question = session.questions[currentQ];
+            
+            const isCorrect = answerIndex === question.correct;
+            if (isCorrect) session.score++;
+            
+            session.answers.push({
+                question: question.question,
+                selected: answerIndex,
+                correct: question.correct,
+                isCorrect
+            });
+
+            session.currentQuestion++;
+
+            if (session.currentQuestion >= session.total) {
+                // Quiz complete
+                const percentage = Math.round((session.score / session.total) * 100);
+                const xpEarned = percentage >= 70 ? config.XP.QUIZ + config.XP.BONUS : config.XP.QUIZ;
+                
+                gamification.addXP(userId, xpEarned, 'quiz');
+
+                let resultText = `
+⚡ **Quiz Complete!**
+
+📚 Subject: ${session.subject}
+✅ Score: ${session.score}/${session.total} (${percentage}%)
+
+${percentage >= 80 ? '🎉 Excellent! You\'re a star!' :
+  percentage >= 60 ? '💪 Good work! Keep going!' :
+  '📚 Review your notes and try again!'}
+
+✨ +${xpEarned} XP earned!
+`;
+
+                const keyboard = [
+                    [{ text: '🔄 New Quiz', callback_data: `quiz_subject_${session.subject}` }],
+                    [{ text: '📊 Progress', callback_data: 'progress' }],
+                    [{ text: '🔙 Back', callback_data: 'main_menu' }]
+                ];
+
+                await bot.editMessageText(resultText, {
+                    chat_id: chatId,
+                    message_id: messageId,
+                    parse_mode: 'Markdown',
+                    reply_markup: { inline_keyboard: keyboard }
+                });
+
+                delete global.testSessions[userId];
+                return;
+            }
+
+            // Send next question
+            const q = session.questions[session.currentQuestion];
+            const optionsText = q.options.map((opt, i) => 
+                `${String.fromCharCode(65 + i)}. ${opt}`
+            ).join('\n');
+
+            const keyboard = q.options.map((opt, i) => {
+                return [{ text: `${String.fromCharCode(65 + i)}. ${opt.substring(0, 30)}`, callback_data: `quiz_answer_${i}` }];
+            });
+
+            await bot.editMessageText(
+                `⚡ **Quick Quiz - Question ${session.currentQuestion + 1}/${session.total}**
+
+${q.question}
+
+${optionsText}
+
+*Select your answer:*`,
                 {
                     chat_id: chatId,
                     message_id: messageId,
@@ -308,7 +741,7 @@ bot.on('callback_query', async (callbackQuery) => {
 
         else if (data === 'schedule_generate') {
             await bot.editMessageText(
-                '📅 **Generating your schedule...**\n\nI\'m analyzing your uploaded books to create a personalized study plan.',
+                '📅 **Mr. M is creating your schedule...**\n\nI\'m analyzing your uploaded books to create a personalized study plan.',
                 {
                     chat_id: chatId,
                     message_id: messageId,
@@ -350,7 +783,7 @@ bot.on('callback_query', async (callbackQuery) => {
 
             if (!schedule) {
                 await bot.editMessageText(
-                    '📅 You don\'t have a schedule yet.\n\nUpload a book and generate a personalized schedule!',
+                    '📅 You don\'t have a schedule yet.\n\nUpload a book and I\'ll create one for you!',
                     {
                         chat_id: chatId,
                         message_id: messageId,
@@ -386,7 +819,7 @@ bot.on('callback_query', async (callbackQuery) => {
             
             if (!books || books.length === 0) {
                 await bot.editMessageText(
-                    '📚 You haven\'t uploaded any books yet.\n\nUpload your textbook to get personalized lessons, quizzes, and schedules!',
+                    '📚 You haven\'t uploaded any books yet.\n\nUpload your textbook for personalized learning!',
                     {
                         chat_id: chatId,
                         message_id: messageId,
@@ -407,8 +840,8 @@ bot.on('callback_query', async (callbackQuery) => {
 
             for (const book of books.slice(-5)) {
                 text += `📖 **${book.originalFilename}**\n`;
-                text += `📚 Subject: ${book.subject} | 📅 Grade ${book.grade}\n`;
-                text += `📊 ${book.totalChunks} sections | 📅 ${book.uploadedAt.substring(0, 10)}\n\n`;
+                text += `📚 ${book.subject} | 📅 Grade ${book.grade}\n`;
+                text += `📊 ${book.totalChunks} sections\n\n`;
                 
                 keyboard.push([
                     { 
@@ -452,7 +885,7 @@ What would you like to do?
             const keyboard = [
                 [{ text: '📅 Generate Schedule', callback_data: `schedule_from_book_${bookHash}` }],
                 [{ text: '❓ Ask Question', callback_data: `book_ask_${bookHash}` }],
-                [{ text: '📖 View Content Preview', callback_data: `book_preview_${bookHash}` }],
+                [{ text: '📖 View Preview', callback_data: `book_preview_${bookHash}` }],
                 [{ text: '🔙 Back', callback_data: 'book_list' }]
             ];
 
@@ -468,7 +901,7 @@ What would you like to do?
             const bookHash = data.replace('schedule_from_book_', '');
             
             await bot.editMessageText(
-                '📅 **Generating schedule from your book...**\n\nCreating a personalized study plan based on this book\'s content.',
+                '📅 **Generating schedule from your book...**',
                 {
                     chat_id: chatId,
                     message_id: messageId,
@@ -544,15 +977,13 @@ ${preview.substring(0, 1500)}${preview.length > 1500 ? '...' : ''}
             global.activeAsk[userId] = { bookHash };
             
             await bot.editMessageText(
-                `💬 **Ask a question about your book**
+                `💬 **Ask Mr. M a question about your book**
 
 Type your question naturally, for example:
 • "What is photosynthesis?"
 • "Explain Chapter 3"
 • "What are the key formulas?"
 • "Define 'equilibrium'"
-
-I'll find the answer in your uploaded book!
 
 📚 *Book: ${book?.originalFilename || 'Unknown'}*`,
                 {
@@ -569,7 +1000,7 @@ I'll find the answer in your uploaded book!
 
             const textbooks = library.getTextbooks(grade);
             let text = `
-📖 **Library**
+📖 **Mr. M's Library**
 
 📚 **Textbooks for Grade ${grade}:**
 `;
@@ -582,8 +1013,7 @@ I'll find the answer in your uploaded book!
             text += '\n\n📝 **Available Resources:**\n';
             text += '• 📐 Formula Sheets\n';
             text += '• 📚 Revision Guides\n';
-            text += '• 📝 Subject Notes\n';
-            text += '• 🎥 Video Lessons\n\n';
+            text += '• 📝 Subject Notes\n\n';
 
             text += '💡 *Upload your own textbooks for personalized learning!*';
 
@@ -606,7 +1036,7 @@ I'll find the answer in your uploaded book!
             const subjects = library.getAllSubjects();
             let text = '📐 **Formula Sheets**\n\n';
 
-            for (const subject of subjects) {
+            for (const subject of subjects.slice(0, 5)) {
                 const formula = library.getFormulaSheet(subject);
                 text += `**${subject}:**\n${formula.substring(0, 100)}...\n\n`;
             }
@@ -643,13 +1073,13 @@ I'll find the answer in your uploaded book!
 
         else if (data === 'ai_teacher') {
             const text = `
-🤖 **AI Teacher**
+🧑‍🏫 **Mr. M - AI Teacher**
 
 I can help you with:
 • 📖 Explain any concept
 • 🧮 Solve math problems
 • 📝 Create summaries
-• ❓ Generate quizzes
+• ❓ Generate quizzes and tests
 • 🌍 Respond in Amharic or Afaan Oromo
 
 **Just type your question naturally!**
@@ -785,28 +1215,11 @@ Reward: +${config.XP.DAILY_GOAL} XP
 
             switch(examType) {
                 case 'worksheets':
-                    const worksheets = exams.getExamsForGrade(grade)?.worksheets || {};
-                    text = '📝 **Worksheets**\n\n';
-                    for (const [subject, ws] of Object.entries(worksheets)) {
-                        text += `**${subject}:**\n`;
-                        ws.forEach(w => {
-                            text += `• ${w.title}\n`;
-                        });
-                        text += '\n';
-                    }
-                    text += '💡 *Upload your textbook for more worksheets!*';
+                    text = `📝 **Worksheets**\n\nType "worksheet [subject]" to get a worksheet!`;
                     break;
 
                 case 'tests':
-                    const tests = exams.getExamsForGrade(grade)?.tests || {};
-                    text = '📋 **Tests**\n\n';
-                    for (const [subject, ts] of Object.entries(tests)) {
-                        text += `**${subject}:**\n`;
-                        ts.forEach(t => {
-                            text += `• ${t.title}\n`;
-                        });
-                        text += '\n';
-                    }
+                    text = `📋 **Tests**\n\nType "test me on [subject]" to start a test!`;
                     break;
 
                 case 'midterm':
@@ -816,7 +1229,7 @@ Reward: +${config.XP.DAILY_GOAL} XP
                         text += `📚 Subjects: ${midterm.subjects.join(', ')}\n`;
                         text += `⏱️ Duration: ${midterm.duration}\n`;
                         text += `📝 Total Marks: ${midterm.totalMarks}\n\n`;
-                        text += `💡 *Practice with sample questions!*`;
+                        text += `💡 *Type "test me on all subjects" to practice!*`;
                     } else {
                         text = 'No midterm exam available for this grade.';
                     }
@@ -942,16 +1355,7 @@ Reward: +${config.XP.DAILY_GOAL} XP
                     break;
 
                 case 'quizzes':
-                    const quizQuestions = study.getQuiz(subject);
-                    text = `❓ **${subject} Quiz**\n\n`;
-                    quizQuestions.forEach((q, i) => {
-                        text += `${i + 1}. ${q.question}\n`;
-                        q.options.forEach((opt, j) => {
-                            text += `   ${String.fromCharCode(97 + j)}) ${opt}\n`;
-                        });
-                        text += '\n';
-                    });
-                    text += '💡 *Type "answers" to see the correct answers!*';
+                    text = `❓ **${subject} Quiz**\n\nType "quiz me on ${subject}" or click /quiz to start!`;
                     break;
 
                 case 'videos':
@@ -967,7 +1371,7 @@ Reward: +${config.XP.DAILY_GOAL} XP
                     break;
 
                 case 'ai_explain':
-                    text = `🤖 **${subject} AI Teacher**\n\nType any question about ${subject} and I'll explain it!`;
+                    text = `🧑‍🏫 **Mr. M - ${subject} Teacher**\n\nType any question about ${subject} and I'll explain it!`;
                     break;
 
                 default:
@@ -1032,11 +1436,9 @@ Reward: +${config.XP.DAILY_GOAL} XP
             );
 
             try {
-                // Get file from Telegram
                 const file = await bot.getFile(tempData.fileId);
                 const fileBuffer = await bot.downloadFile(file.file_id, './temp/');
                 
-                // Process book
                 const result = await bookProcessor.processUploadedBook(
                     fileBuffer,
                     tempData.fileName,
@@ -1055,7 +1457,6 @@ Reward: +${config.XP.DAILY_GOAL} XP
                     return;
                 }
 
-                // Add XP for book upload
                 const xpResult = gamification.uploadBook(userId);
 
                 const keyboard = [
@@ -1074,7 +1475,6 @@ Reward: +${config.XP.DAILY_GOAL} XP
 📚 Subject: ${tempData.subject}
 📅 Grade: ${grade}
 📊 ${result.totalChunks} sections extracted
-📝 ${result.totalChars} characters processed
 ✨ +${config.XP.BOOK_UPLOAD} XP
 
 ${xpResult}
@@ -1089,7 +1489,6 @@ What would you like to do next?
                     }
                 );
 
-                // Clean up temp data
                 delete global.tempFileData[userId];
 
             } catch (error) {
@@ -1186,7 +1585,7 @@ bot.on('document', async (msg) => {
     try {
         const user = database.getUser(userId);
         if (!user) {
-            await bot.sendMessage(chatId, 'Please start the bot with /start first!');
+            await bot.sendMessage(chatId, 'Please start with /start first!');
             return;
         }
 
@@ -1210,7 +1609,6 @@ bot.on('document', async (msg) => {
             return [{ text: `${emoji} ${subject}`, callback_data: `book_subject_${subject}` }];
         });
 
-        // Store file info
         global.tempFileData[userId] = {
             fileId: document.file_id,
             fileName: fileName
@@ -1237,7 +1635,6 @@ bot.on('message', async (msg) => {
     const userId = msg.from.id;
     const text = msg.text;
 
-    // Skip if not text or is command
     if (!text || text.startsWith('/')) return;
     if (msg.document) return;
 
@@ -1263,7 +1660,6 @@ bot.on('message', async (msg) => {
                 delete global.waitingForHours[userId];
                 await bot.sendMessage(chatId, `✅ Study hours set to ${hours} hours per day!`);
                 
-                // Regenerate schedule with new hours
                 const schedule = await scheduleGenerator.generateScheduleFromBooks(userId, null, hours);
                 if (!schedule.error) {
                     database.saveSchedule(userId, schedule);
@@ -1276,11 +1672,118 @@ bot.on('message', async (msg) => {
             return;
         }
 
-        // ========== QUIZ ANSWERS ==========
-        if (text.toLowerCase() === 'answers' || text.toLowerCase() === 'answer') {
+        // ========== TEST REQUESTS ==========
+        if (text.match(/test me on/i)) {
+            const subject = text.replace(/test me on/i, '').trim();
+            const user = database.getUser(userId);
             const grade = user?.grade || 8;
-            const answerText = aiTeacher.getQuizAnswers(grade);
-            await bot.sendMessage(chatId, answerText, { parse_mode: 'Markdown' });
+
+            await bot.sendMessage(chatId, 
+                `🧑‍🏫 **Mr. M is generating a test...**
+
+📚 Subject: ${subject}
+📅 Grade: ${grade}
+
+⏳ Please wait...`,
+                { parse_mode: 'Markdown' }
+            );
+
+            const testData = aiTeacher.generateTest(subject, grade, userId);
+            
+            if (testData.error) {
+                await bot.sendMessage(chatId, `❌ ${testData.error}`, { parse_mode: 'Markdown' });
+                return;
+            }
+
+            global.testSessions[userId] = {
+                subject,
+                questions: testData.questions,
+                currentQuestion: 0,
+                answers: [],
+                score: 0,
+                total: testData.questions.length
+            };
+
+            const q = testData.questions[0];
+            const optionsText = q.options.map((opt, i) => 
+                `${String.fromCharCode(65 + i)}. ${opt}`
+            ).join('\n');
+
+            const keyboard = q.options.map((opt, i) => {
+                return [{ text: `${String.fromCharCode(65 + i)}. ${opt.substring(0, 30)}`, callback_data: `test_answer_${i}` }];
+            });
+
+            await bot.sendMessage(chatId,
+                `🧑‍🏫 **${subject} Test - Question 1/${testData.questions.length}**
+
+${q.question}
+
+${optionsText}
+
+*Select your answer below:*`,
+                {
+                    parse_mode: 'Markdown',
+                    reply_markup: { inline_keyboard: keyboard }
+                }
+            );
+            return;
+        }
+
+        // ========== QUIZ REQUESTS ==========
+        if (text.match(/quiz me on/i)) {
+            const subject = text.replace(/quiz me on/i, '').trim();
+            const user = database.getUser(userId);
+            const grade = user?.grade || 8;
+
+            await bot.sendMessage(chatId, 
+                `⚡ **Mr. M is generating a quiz...**
+
+📚 Subject: ${subject}
+📅 Grade: ${grade}
+
+⏳ Please wait...`,
+                { parse_mode: 'Markdown' }
+            );
+
+            const quizData = aiTeacher.generateQuiz(subject, grade, userId);
+            
+            if (quizData.error) {
+                await bot.sendMessage(chatId, `❌ ${quizData.error}`, { parse_mode: 'Markdown' });
+                return;
+            }
+
+            global.testSessions[userId] = {
+                subject,
+                questions: quizData.questions,
+                currentQuestion: 0,
+                answers: [],
+                score: 0,
+                total: quizData.questions.length,
+                isQuiz: true
+            };
+
+            const q = quizData.questions[0];
+            const optionsText = q.options.map((opt, i) => 
+                `${String.fromCharCode(65 + i)}. ${opt}`
+            ).join('\n');
+
+            const keyboard = q.options.map((opt, i) => {
+                return [{ text: `${String.fromCharCode(65 + i)}. ${opt.substring(0, 30)}`, callback_data: `quiz_answer_${i}` }];
+            });
+
+            await bot.sendMessage(chatId,
+                `⚡ **Quick Quiz - Question 1/${quizData.questions.length}**
+
+${q.question}
+
+${optionsText}
+
+*Select your answer:*`,
+                {
+                    parse_mode: 'Markdown',
+                    reply_markup: { inline_keyboard: keyboard }
+                }
+            );
             return;
         }
 
@@ -1300,13 +1803,31 @@ bot.on('message', async (msg) => {
             return;
         }
 
+        // ========== WORKSHEET REQUESTS ==========
+        if (text.toLowerCase().startsWith('worksheet ')) {
+            const subject = text.replace(/worksheet /i, '').trim();
+            const user = database.getUser(userId);
+            const grade = user?.grade || 8;
+            
+            const worksheet = aiTeacher.generateWorksheet(subject, grade);
+            await bot.sendMessage(chatId, worksheet, { parse_mode: 'Markdown' });
+            return;
+        }
+
+        // ========== EXPLAIN REQUESTS ==========
+        if (text.match(/explain/i) || text.match(/what is/i) || text.match(/how does/i)) {
+            const user = database.getUser(userId);
+            const response = aiTeacher.teach(userId, text);
+            await bot.sendMessage(chatId, response, { parse_mode: 'Markdown' });
+            return;
+        }
+
         // ========== BOOK QUESTIONS ==========
         if (global.activeAsk && global.activeAsk[userId]) {
             const { bookHash } = global.activeAsk[userId];
             const chunks = await bookProcessor.getBookChunks(userId, bookHash);
             
             if (chunks && chunks.length > 0) {
-                // Find answer in chunks
                 let answer = null;
                 for (const chunk of chunks) {
                     if (chunk.toLowerCase().includes(text.toLowerCase())) {
@@ -1330,7 +1851,7 @@ bot.on('message', async (msg) => {
             }
         }
 
-        // ========== AI TEACHER ==========
+        // ========== AI TEACHER (Default) ==========
         if (user) {
             const response = aiTeacher.teach(userId, text);
             await bot.sendMessage(chatId, response, { parse_mode: 'Markdown' });
@@ -1354,9 +1875,8 @@ bot.on('error', (error) => {
     console.error('Bot error:', error);
 });
 
-// ============ PROACTIVE COACH (Optional) ============
+// ============ PROACTIVE COACH ============
 
-// Check for inactive users every 24 hours
 try {
     const cron = require('node-cron');
     cron.schedule('0 9 * * *', async () => {
@@ -1373,7 +1893,6 @@ try {
             }
         }
 
-        // Send exam countdowns
         const users = database.users;
         for (const [userId, user] of Object.entries(users)) {
             try {
@@ -1388,18 +1907,16 @@ try {
         }
     });
 } catch (e) {
-    console.log('⚠️ Proactive features disabled (node-cron not available)');
+    console.log('⚠️ Proactive features disabled');
 }
 
 // ============ HTTP SERVER FOR RENDER ============
 
-// Create a simple HTTP server to keep Render happy
 const server = http.createServer((req, res) => {
     res.writeHead(200, { 'Content-Type': 'text/plain' });
-    res.end('🤖 A+ Coach Bot is running!');
+    res.end('🤖 A+ Coach Bot with Mr. M is running!');
 });
 
-// Get port from environment or use default
 const PORT = process.env.PORT || 3000;
 
 server.listen(PORT, () => {
@@ -1409,5 +1926,4 @@ server.listen(PORT, () => {
     console.log(`📚 Books directory: ${config.BOOKS_DIR}`);
 });
 
-// Keep the bot polling alive
-console.log('✅ All handlers registered. Bot is ready!');
+console.log('✅ All handlers registered. Mr. M is ready to teach! 🧑‍🏫');
