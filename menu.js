@@ -24,15 +24,15 @@ class Menu {
     }
 
     static mainMenu(user) {
-        const name = user.name || 'Student';
-        const streak = user.streak || 0;
-        const gradeDisplay = this.getGradeDisplay(user.grade);
+        const name = user?.name || 'Student';
+        const streak = user?.streak || 0;
+        const gradeDisplay = this.getGradeDisplay(user?.grade);
 
         const keyboard = [
             [{ text: '🏠 Home', callback_data: 'home' }],
             [{ text: '📚 Study', callback_data: 'study' }],
             [{ text: '📝 Exams', callback_data: 'exams' }],
-            [{ text: '🤖 AI Teacher', callback_data: 'ai_teacher' }],
+            [{ text: '🧑‍🏫 Mr. M - AI Teacher', callback_data: 'ai_teacher' }],
             [{ text: '📖 Library', callback_data: 'library' }],
             [{ text: '📚 Upload Book', callback_data: 'upload_book' }],
             [{ text: '📅 Schedule', callback_data: 'schedule' }],
@@ -43,7 +43,7 @@ class Menu {
         ];
 
         const text = `
-🤖 **A+ Coach**
+🧑‍🏫 **Mr. M - Your AI Teacher**
 
 👋 Welcome back, ${name}!
 📚 ${gradeDisplay} Student
@@ -73,15 +73,16 @@ Select a subject to continue:
     }
 
     static subjectMenu(subject) {
-        const features = config.FEATURES;
-        const keyboard = [];
-
-        Object.entries(features).forEach(([key, value]) => {
-            keyboard.push([{ text: value, callback_data: `feature_${subject}_${key}` }]);
-        });
-
-        keyboard.push([{ text: '📚 Upload Book', callback_data: `upload_for_subject_${subject}` }]);
-        keyboard.push([{ text: '🔙 Back', callback_data: 'study' }]);
+        const keyboard = [
+            [{ text: '📖 Lessons', callback_data: `feature_${subject}_lessons` }],
+            [{ text: '📝 Notes', callback_data: `feature_${subject}_notes` }],
+            [{ text: '📚 Textbooks', callback_data: `feature_${subject}_textbooks` }],
+            [{ text: '❓ Quiz', callback_data: `feature_${subject}_quizzes` }],
+            [{ text: '🧑‍🏫 Ask Mr. M', callback_data: `feature_${subject}_ai_explain` }],
+            [{ text: '📄 Worksheet', callback_data: `feature_${subject}_worksheet` }],
+            [{ text: '📚 Upload Book', callback_data: `upload_for_subject_${subject}` }],
+            [{ text: '🔙 Back', callback_data: 'study' }]
+        ];
 
         const emoji = this.getEmoji(subject);
         const text = `
@@ -135,10 +136,10 @@ Select exam type:
 ⚙️ **Settings**
 
 Current Settings:
-• Grade: ${this.getGradeDisplay(user.grade)}
-• Stream: ${user.stream || 'Not set'}
-• Language: ${user.language || 'English'}
-• Notifications: ${user.settings?.notifications ? 'On' : 'Off'}
+• Grade: ${this.getGradeDisplay(user?.grade)}
+• Stream: ${user?.stream || 'Not set'}
+• Language: ${user?.language || 'English'}
+• Notifications: ${user?.settings?.notifications !== false ? 'On' : 'Off'}
 `;
 
         return { text, keyboard };
