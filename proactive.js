@@ -3,45 +3,29 @@ class ProactiveCoach {
         this.db = database;
     }
 
-    // Add a reminder for a user
+    // Add a reminder
     addReminder(userId, time, message) {
         const user = this.db.getUser(userId);
         if (!user) return false;
-
         if (!user.reminders) user.reminders = [];
-        user.reminders.push({ time, message, active: true, createdAt: new Date().toISOString() });
+        user.reminders.push({ time, message, active: true });
         this.db.updateUser(userId, { reminders: user.reminders });
         return true;
     }
 
-    // Get all active reminders for a user
+    // Get reminders
     getReminders(userId) {
         const user = this.db.getUser(userId);
-        if (!user) return [];
-        return (user.reminders || []).filter(r => r.active !== false);
+        return user?.reminders || [];
     }
 
-    // Clear all reminders for a user
+    // Clear reminders
     clearReminders(userId) {
-        const user = this.db.getUser(userId);
-        if (!user) return false;
         this.db.updateUser(userId, { reminders: [] });
         return true;
     }
 
-    // Remove a specific reminder
-    removeReminder(userId, index) {
-        const user = this.db.getUser(userId);
-        if (!user || !user.reminders) return false;
-        if (index >= 0 && index < user.reminders.length) {
-            user.reminders.splice(index, 1);
-            this.db.updateUser(userId, { reminders: user.reminders });
-            return true;
-        }
-        return false;
-    }
-
-    // ===== CHECK REMINDERS (CRON JOB) =====
+    // ===== CHECK REMINDERS (Called by cron) =====
     checkReminders() {
         try {
             const now = new Date();
@@ -52,16 +36,13 @@ class ProactiveCoach {
             const users = this.db.getAllUsers();
 
             for (const [userId, user] of Object.entries(users)) {
-                if (!user.reminders || user.reminders.length === 0) continue;
-                
-                const activeReminders = user.reminders.filter(r => r.active !== false);
-                for (const reminder of activeReminders) {
-                    if (reminder.time === currentTime) {
+                if (!user.reminders) continue;
+                for (const reminder of user.reminders) {
+                    if (reminder.time === currentTime && reminder.active !== false) {
                         dueUsers.push({
                             userId,
                             name: user.name || 'Student',
-                            message: reminder.message,
-                            reminder: reminder
+                            message: reminder.message
                         });
                     }
                 }
@@ -73,63 +54,31 @@ class ProactiveCoach {
         }
     }
 
-    // Generate reminder message text
+    // Format reminder message
     formatReminderMessage(userId, reminder) {
         const user = this.db.getUser(userId);
         const name = user?.name || 'Student';
-        return `
-🔔 **Reminder for ${name}**
-
-${reminder.message}
-
-💡 *Time to study! You've got this!*
-`;
+        return `🔔 **Reminder for ${name}**\n\n${reminder.message}\n\n💡 Time to study!`;
     }
 
-    // Get inactivity alert
+    // Inactivity alert
     getInactivityMessage(user) {
         const name = user?.name || 'Student';
         const days = user?.inactiveDays || 2;
-        return `
-⚠️ **Hey ${name}!**
-
-You haven't studied in ${days} days.
-
-Let's get back on track! 🚀
-
-💡 *Even 15 minutes of study makes a difference!*
-`;
+        return `⚠️ Hey ${name}!\n\nYou haven't studied in ${days} days.\n\nLet's get back on track! 🚀`;
     }
 
-    // Get exam countdown
+    // Exam countdown
     getExamCountdown(user) {
-        const examDate = user?.examDate;
-        if (!examDate) return null;
-
+        if (!user?.examDate) return null;
         try {
-            const now = new Date();
-            const exam = new Date(examDate);
-            const daysLeft = Math.ceil((exam - now) / (1000 * 60 * 60 * 24));
-
-            if (daysLeft <= 0) {
-                return `📅 **Exam Day!** Good luck, ${user.name}! 🍀`;
-            }
-
-            if (daysLeft <= 30) {
-                return `
-⏰ **Exam Countdown: ${daysLeft} days left!**
-
-📚 Here's today's plan:
-1. Review your weakest subject
-2. Practice exam questions
-3. Stay confident!
-
-💪 *You've got this, ${user.name}!*
-`;
+            const days = Math.ceil((new Date(user.examDate) - new Date()) / (1000 * 60 * 60 * 24));
+            if (days <= 0) return `📅 Exam Day! Good luck! 🍀`;
+            if (days <= 30) {
+                return `⏰ **${days} days until exam!**\n\n📚 Review your weakest subject today!`;
             }
             return null;
         } catch (error) {
-            console.error('Exam countdown error:', error);
             return null;
         }
     }
