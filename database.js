@@ -13,8 +13,10 @@ class Database {
         try {
             if (fs.existsSync(this.usersFile)) {
                 this.users = fs.readJsonSync(this.usersFile);
+                console.log(`📂 Loaded ${Object.keys(this.users).length} users`);
             }
         } catch (e) {
+            console.error('Load error:', e);
             this.users = {};
         }
         this.saveData();
@@ -36,35 +38,61 @@ class Database {
     }
 
     createUser(userId, name, language, grade, stream) {
-        const id = String(userId);
-        if (this.users[id]) return this.users[id];
+        try {
+            const id = String(userId);
+            console.log(`📝 Creating user: ${name}, Grade: ${grade}, Language: ${language}`);
+            
+            if (this.users[id]) {
+                console.log(`User ${id} already exists, returning existing`);
+                return this.users[id];
+            }
 
-        const subjects = this.getSubjects(grade, stream);
-        const progress = {};
-        subjects.forEach(s => { progress[s] = { lessons: 0, quizAvg: 0, xp: 0 }; });
+            const subjects = this.getSubjects(grade, stream);
+            const progress = {};
+            subjects.forEach(s => { progress[s] = { lessons: 0, quizAvg: 0, xp: 0 }; });
 
-        this.users[id] = {
-            name: name || 'Student',
-            language: language || 'English',
-            grade: grade || 8,
-            stream: stream || null,
-            subjects,
-            progress,
-            xp: 0,
-            level: 1,
-            streak: 0,
-            lastActive: new Date().toISOString(),
-            quizScores: [],
-            books: [],
-            schedule: null,
-            dailyGoal: { lessons: 2, quiz: 10, hours: 1 },
-            settings: { notifications: true, reminderTime: '16:00' },
-            reminders: [],
-            dailyTasks: [],
-            examDate: null
-        };
-        this.saveData();
-        return this.users[id];
+            this.users[id] = {
+                id: id,
+                name: name || 'Student',
+                language: language || 'English',
+                grade: grade || 8,
+                stream: stream || null,
+                subjects: subjects,
+                progress: progress,
+                xp: 0,
+                level: 1,
+                streak: 0,
+                lastActive: new Date().toISOString(),
+                quizScores: [],
+                books: [],
+                schedule: null,
+                dailyGoal: { lessons: 2, quiz: 10, hours: 1 },
+                settings: { notifications: true, reminderTime: '16:00' },
+                reminders: [],
+                dailyTasks: [],
+                examDate: null
+            };
+            
+            this.saveData();
+            console.log(`✅ User created: ${name} (${id})`);
+            return this.users[id];
+            
+        } catch (error) {
+            console.error('Create user error:', error);
+            return {
+                id: String(userId),
+                name: name || 'Student',
+                language: language || 'English',
+                grade: grade || 8,
+                stream: stream || null,
+                subjects: ['Mathematics', 'English'],
+                xp: 0,
+                level: 1,
+                streak: 0,
+                progress: {},
+                settings: { notifications: true, reminderTime: '16:00' }
+            };
+        }
     }
 
     getUser(userId) {
@@ -86,6 +114,7 @@ class Database {
         if (this.users[id]) {
             delete this.users[id];
             this.saveData();
+            console.log(`🗑️ User reset: ${id}`);
             return true;
         }
         return false;
