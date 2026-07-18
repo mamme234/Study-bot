@@ -27,7 +27,6 @@ class ScheduleGenerator {
             };
         }
 
-        // Extract topics from books
         let allTopics = [];
         for (const book of books) {
             const chunks = await this.bookProcessor.getBookChunks(userId, book.fileHash);
@@ -51,7 +50,6 @@ class ScheduleGenerator {
     extractTopicsFromChunks(chunks, book) {
         const topics = [];
         let chapterCount = 0;
-
         const chapterPatterns = [
             /(?:Chapter|CHAPTER|Ch\.|ch\.)\s+(\d+)[\s:.-]+(.+)/,
             /(?:Unit|UNIT|U\.)\s+(\d+)[\s:.-]+(.+)/,
@@ -125,7 +123,6 @@ class ScheduleGenerator {
     estimateDifficulty(text) {
         const words = text.split(' ');
         if (!words || words.length === 0) return 'Medium';
-
         const avgWordLen = words.reduce((sum, w) => sum + w.length, 0) / words.length;
         const sentences = text.match(/[.!?]+/g) || [];
         const avgSentenceLen = words.length / Math.max(sentences.length, 1);
@@ -163,7 +160,6 @@ class ScheduleGenerator {
                         '🔄 Review and summarize'
                     ];
                     
-                    // Add to daily tasks
                     dailyTasks.push({
                         day: `Week ${week + 1}, Day ${day + 1}`,
                         topic: topic.title,
@@ -199,18 +195,14 @@ class ScheduleGenerator {
             });
         }
 
-        // Save daily tasks to user
         if (dailyTasks.length > 0) {
             const userTasks = user.dailyTasks || [];
             const today = new Date().toDateString();
-            
-            // Only add if not already added today
             const existingToday = userTasks.filter(t => 
                 new Date(t.date).toDateString() === today
             );
             
             if (existingToday.length === 0) {
-                // Add first 5 tasks as daily tasks
                 const firstTasks = dailyTasks.slice(0, 5);
                 for (const task of firstTasks) {
                     this.db.addDailyTask(user.id, 
@@ -256,7 +248,6 @@ class ScheduleGenerator {
 
         text += '✅ **What You Must Do Each Day**\n\n';
 
-        // Show daily tasks
         if (schedule.dailyTasks && schedule.dailyTasks.length > 0) {
             schedule.dailyTasks.forEach((task, index) => {
                 text += `📌 **${task.day}**\n`;
