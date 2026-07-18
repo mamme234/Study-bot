@@ -60,7 +60,7 @@ class Translations {
                 'level_up': '🎊 ደረጃ ጨመርክ! አሁን በደረጃ {level} ላይ ነህ!'
             },
             'Afaan Oromo': {
-                'welcome': 'A+ Coach'tti baga nagaan dhufte!',
+                'welcome': 'A+ Coach' + 'tti baga nagaan dhufte!',
                 'study': 'Barumsaa',
                 'exams': 'Qormaata',
                 'settings': 'Qindaa\'ina',
