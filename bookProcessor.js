@@ -117,22 +117,32 @@ class BookProcessor {
 
     async extractEPUB(filePath) {
         try {
-            const epub = require('epub-parser');
-            const data = await fs.readFile(filePath);
-            const book = epub.parse(data);
+            // Simple EPUB extraction - read as zip and extract text
+            const AdmZip = require('adm-zip');
+            const zip = new AdmZip(filePath);
             let text = '';
             
-            if (book.sections) {
-                book.sections.forEach(section => {
-                    if (section.content) {
-                        text += section.content.replace(/<[^>]+>/g, ' ') + '\n\n';
-                    }
-                });
+            // Get all entries
+            const entries = zip.getEntries();
+            for (const entry of entries) {
+                if (entry.entryName.endsWith('.html') || 
+                    entry.entryName.endsWith('.xhtml') ||
+                    entry.entryName.endsWith('.xml')) {
+                    const content = entry.getData().toString('utf-8');
+                    // Remove HTML tags
+                    const cleanContent = content.replace(/<[^>]+>/g, ' ');
+                    text += cleanContent + '\n\n';
+                }
             }
             return text;
         } catch (error) {
             console.error('EPUB extraction error:', error);
-            return '';
+            // Fallback: try reading as text
+            try {
+                return await fs.readFile(filePath, 'utf-8');
+            } catch {
+                return '';
+            }
         }
     }
 
