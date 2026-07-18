@@ -1,0 +1,5 @@
+# This directory stores uploaded books and their processed data
+# Structure:
+#   /books/
+#     /processed/  - Book metadata
+#     /chunks/     - Extracted text chunks
