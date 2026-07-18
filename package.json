@@ -1,37 +1,26 @@
 {
   "name": "aplus-coach-bot",
   "version": "3.0.0",
-  "description": "A+ Coach - Ethiopian Exam Preparation Bot with Book Upload, Schedule Generation & AI Teacher",
+  "description": "A+ Coach - Ethiopian Exam Preparation Bot",
   "main": "index.js",
   "scripts": {
     "start": "node index.js",
-    "dev": "nodemon index.js",
-    "test": "node test.js"
+    "dev": "nodemon index.js"
   },
   "dependencies": {
+    "adm-zip": "^0.5.10",
     "axios": "^1.6.0",
     "dotenv": "^16.3.1",
     "fs-extra": "^11.1.1",
     "mammoth": "^1.6.0",
     "node-cron": "^3.0.2",
     "node-telegram-bot-api": "^0.61.0",
-    "pdf-parse": "^1.1.1",
-    "adm-zip": "^0.5.10"
+    "pdf-parse": "^1.1.1"
   },
   "devDependencies": {
     "nodemon": "^3.0.1"
   },
   "engines": {
     "node": ">=16.0.0"
-  },
-  "keywords": [
-    "telegram-bot",
-    "education",
-    "exam-preparation",
-    "ethiopia",
-    "ai-teacher",
-    "study-planner"
-  ],
-  "author": "A+ Coach Team",
-  "license": "MIT"
+  }
 }
