@@ -11,7 +11,6 @@ const Menu = require('./menu');
 const AITeacher = require('./aiTeacher');
 const ProactiveCoach = require('./proactive');
 const gamification = require('./gamification');
-const scheduleGenerator = require('./scheduleGenerator');
 const bookProcessor = require('./bookProcessor');
 
 // ============ INITIALIZE ============
@@ -20,9 +19,13 @@ const aiTeacher = new AITeacher();
 const proactive = new ProactiveCoach(database);
 
 // Ensure directories
-['./data', './data/books', './data/books/processed', './data/books/chunks', './temp'].forEach(async dir => {
-    await fs.ensureDir(dir);
-});
+const ensureDirs = async () => {
+    const dirs = ['./data', './data/books', './data/books/processed', './data/books/chunks', './temp'];
+    for (const dir of dirs) {
+        await fs.ensureDir(dir);
+    }
+};
+ensureDirs();
 
 console.log(`🧑‍🏫 Mr. M v${config.VERSION} is running...`);
 
@@ -31,6 +34,7 @@ global.regState = {};
 global.tempFiles = {};
 global.waitingHours = {};
 global.waitingReminder = {};
+global.waitingTask = {};
 global.quizSessions = {};
 global.waitingExamDate = {};
 
@@ -44,9 +48,15 @@ bot.onText(/\/start/, async (msg) => {
         let user = database.getUser(userId);
 
         if (user) {
-            await bot.sendMessage(chatId, `🧑‍🏫 **Welcome back, ${user.name}!**\n\nLet's continue learning! 📚`, { parse_mode: 'Markdown' });
+            await bot.sendMessage(chatId, 
+                `🧑‍🏫 **Welcome back, ${user.name}!**\n\nLet's continue learning! 📚`,
+                { parse_mode: 'Markdown' }
+            );
             const { text, keyboard } = Menu.mainMenu(user);
-            await bot.sendMessage(chatId, text, { parse_mode: 'Markdown', reply_markup: { inline_keyboard: keyboard } });
+            await bot.sendMessage(chatId, text, {
+                parse_mode: 'Markdown',
+                reply_markup: { inline_keyboard: keyboard }
+            });
         } else {
             await bot.sendMessage(chatId, 
                 `🧑‍🏫 **Hello! I'm Mr. M - Your AI Teacher!**
@@ -60,7 +70,7 @@ What's your name?`,
         }
     } catch (e) {
         console.error('Start error:', e);
-        await bot.sendMessage(chatId, '❌ Error. Try again.');
+        await bot.sendMessage(chatId, '❌ Error. Try again with /start');
     }
 });
 
@@ -74,6 +84,7 @@ bot.onText(/\/reset/, async (msg) => {
     delete global.quizSessions[userId];
     delete global.waitingHours[userId];
     delete global.waitingReminder[userId];
+    delete global.waitingTask[userId];
 
     await bot.sendMessage(chatId, 
         `🔄 **All your data has been reset.**
@@ -126,8 +137,164 @@ bot.onText(/\/cancel/, async (msg) => {
     delete global.quizSessions[userId];
     delete global.waitingHours[userId];
     delete global.waitingReminder[userId];
+    delete global.waitingTask[userId];
 
     await bot.sendMessage(chatId, '✅ Cancelled. Use /start to begin again.');
+});
+
+// ============ MESSAGE HANDLER ============
+
+bot.on('message', async (msg) => {
+    const chatId = msg.chat.id;
+    const userId = msg.from.id;
+    const text = msg.text;
+
+    if (!text || text.startsWith('/')) return;
+    if (msg.document) return;
+
+    try {
+        const user = database.getUser(userId);
+
+        // ===== NAME REGISTRATION =====
+        if (global.regState[userId]?.step === 'name') {
+            try {
+                global.regState[userId].name = text;
+                global.regState[userId].step = 'complete';
+                
+                const { text: langText, keyboard } = Menu.languageMenu();
+                await bot.sendMessage(chatId, langText, {
+                    parse_mode: 'Markdown',
+                    reply_markup: { inline_keyboard: keyboard }
+                });
+            } catch (error) {
+                console.error('Name registration error:', error);
+                await bot.sendMessage(chatId, '❌ Error. Please try again with /start');
+            }
+            return;
+        }
+
+        // ===== REMINDER SETUP =====
+        if (global.waitingReminder && global.waitingReminder[userId]) {
+            const match = text.match(/^(\d{1,2}):(\d{2})\s+(.+)$/);
+            if (match) {
+                const hours = parseInt(match[1]);
+                const minutes = parseInt(match[2]);
+                const message = match[3];
+
+                if (hours >= 0 && hours <= 23 && minutes >= 0 && minutes <= 59) {
+                    const timeStr = `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}`;
+                    const user = database.getUser(userId);
+                    
+                    if (user) {
+                        const reminders = user.reminders || [];
+                        reminders.push({ time: timeStr, message, active: true });
+                        database.updateUser(userId, { reminders });
+                        
+                        delete global.waitingReminder[userId];
+                        
+                        await bot.sendMessage(chatId, 
+                            `✅ **Reminder set!**\n\n⏰ ${timeStr} - ${message}\n\nI'll remind you daily!`,
+                            { parse_mode: 'Markdown' }
+                        );
+                        
+                        const { text: menuText, keyboard } = Menu.mainMenu(user);
+                        await bot.sendMessage(chatId, menuText, {
+                            parse_mode: 'Markdown',
+                            reply_markup: { inline_keyboard: keyboard }
+                        });
+                        return;
+                    }
+                } else {
+                    await bot.sendMessage(chatId, 
+                        '❌ **Invalid time!**\n\nUse format: `16:00 Study Math`',
+                        { parse_mode: 'Markdown' }
+                    );
+                    return;
+                }
+            } else {
+                await bot.sendMessage(chatId, 
+                    '❌ **Invalid format!**\n\nUse: `16:00 Study Math`',
+                    { parse_mode: 'Markdown' }
+                );
+                return;
+            }
+        }
+
+        // ===== DAILY TASK SETUP =====
+        if (global.waitingTask && global.waitingTask[userId]) {
+            const user = database.getUser(userId);
+            if (user) {
+                database.addDailyTask(userId, text);
+                delete global.waitingTask[userId];
+                
+                await bot.sendMessage(chatId, 
+                    `✅ **Task added!**\n\n📝 ${text}\n\nKeep going! 💪`,
+                    { parse_mode: 'Markdown' }
+                );
+                
+                const { text: menuText, keyboard } = Menu.mainMenu(user);
+                await bot.sendMessage(chatId, menuText, {
+                    parse_mode: 'Markdown',
+                    reply_markup: { inline_keyboard: keyboard }
+                });
+                return;
+            }
+        }
+
+        // ===== EXAM DATE SETUP =====
+        if (global.waitingExamDate && global.waitingExamDate[userId]) {
+            const dateMatch = text.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+            if (dateMatch) {
+                const year = parseInt(dateMatch[1]);
+                const month = parseInt(dateMatch[2]) - 1;
+                const day = parseInt(dateMatch[3]);
+                const examDate = new Date(year, month, day);
+
+                if (!isNaN(examDate) && examDate > new Date()) {
+                    database.updateUser(userId, { examDate: examDate.toISOString() });
+                    delete global.waitingExamDate[userId];
+                    
+                    const days = Math.ceil((examDate - new Date()) / (1000 * 60 * 60 * 24));
+                    await bot.sendMessage(chatId, 
+                        `📅 **Exam date set!**\n\n📅 ${text}\n⏰ ${days} days left!\n\n💪 You've got this!`,
+                        { parse_mode: 'Markdown' }
+                    );
+                    
+                    const user = database.getUser(userId);
+                    const { text: menuText, keyboard } = Menu.mainMenu(user);
+                    await bot.sendMessage(chatId, menuText, {
+                        parse_mode: 'Markdown',
+                        reply_markup: { inline_keyboard: keyboard }
+                    });
+                    return;
+                } else {
+                    await bot.sendMessage(chatId, 
+                        '❌ **Invalid date!**\n\nUse future date: `2026-06-15`',
+                        { parse_mode: 'Markdown' }
+                    );
+                    return;
+                }
+            } else {
+                await bot.sendMessage(chatId, 
+                    '❌ **Invalid format!**\n\nUse: `2026-06-15`',
+                    { parse_mode: 'Markdown' }
+                );
+                return;
+            }
+        }
+
+        // ===== AI TEACHER =====
+        if (user) {
+            const response = await aiTeacher.ask(userId, text, user);
+            await bot.sendMessage(chatId, response, { parse_mode: 'Markdown' });
+        } else {
+            await bot.sendMessage(chatId, 'Please start with /start first!');
+        }
+
+    } catch (error) {
+        console.error('Message error:', error);
+        await bot.sendMessage(chatId, '❌ An error occurred.');
+    }
 });
 
 // ============ CALLBACK QUERY HANDLER ============
@@ -143,60 +310,144 @@ bot.on('callback_query', async (callbackQuery) => {
     try {
         const user = database.getUser(userId);
 
-        // ===== REGISTRATION =====
+        // ===== LANGUAGE SELECTION =====
         if (data.startsWith('lang_')) {
-            const lang = data.replace('lang_', '');
-            if (!global.regState[userId]) global.regState[userId] = {};
-            global.regState[userId].language = lang;
+            try {
+                const lang = data.replace('lang_', '');
+                console.log(`📝 Language selected: ${lang} for user ${userId}`);
+                
+                if (!global.regState[userId]) {
+                    global.regState[userId] = {};
+                }
+                global.regState[userId].language = lang;
 
-            const { text, keyboard } = Menu.gradeMenu();
-            await bot.editMessageText(text, { chat_id: chatId, message_id: messageId, reply_markup: { inline_keyboard: keyboard } });
-            return;
-        }
-
-        if (data.startsWith('grade_')) {
-            const gradeStr = data.replace('grade_', '');
-            const grade = isNaN(gradeStr) ? gradeStr : parseInt(gradeStr);
-
-            if (!global.regState[userId]) global.regState[userId] = {};
-            global.regState[userId].grade = grade;
-
-            if (typeof grade === 'number' && grade >= 11) {
-                const { text, keyboard } = Menu.streamMenu();
-                await bot.editMessageText(text, { chat_id: chatId, message_id: messageId, reply_markup: { inline_keyboard: keyboard } });
-            } else {
-                const name = global.regState[userId]?.name || 'Student';
-                const lang = global.regState[userId]?.language || 'English';
-                const newUser = database.createUser(userId, name, lang, grade);
-                delete global.regState[userId];
-
-                await bot.sendMessage(chatId, `🧑‍🏫 **Welcome ${name}!**\n\n✅ Profile created for Grade ${grade}\n\nLet's start learning! 🚀`, { parse_mode: 'Markdown' });
-                const { text, keyboard } = Menu.mainMenu(newUser);
-                await bot.editMessageText(text, { chat_id: chatId, message_id: messageId, parse_mode: 'Markdown', reply_markup: { inline_keyboard: keyboard } });
+                const { text, keyboard } = Menu.gradeMenu();
+                await bot.editMessageText(text, {
+                    chat_id: chatId,
+                    message_id: messageId,
+                    parse_mode: 'Markdown',
+                    reply_markup: { inline_keyboard: keyboard }
+                });
+            } catch (error) {
+                console.error('Language selection error:', error);
+                await bot.editMessageText(
+                    '❌ Error selecting language. Please try again with /start',
+                    {
+                        chat_id: chatId,
+                        message_id: messageId,
+                        parse_mode: 'Markdown'
+                    }
+                );
             }
             return;
         }
 
+        // ===== GRADE SELECTION =====
+        if (data.startsWith('grade_')) {
+            try {
+                const gradeStr = data.replace('grade_', '');
+                const grade = isNaN(gradeStr) ? gradeStr : parseInt(gradeStr);
+                console.log(`📝 Grade selected: ${grade} for user ${userId}`);
+
+                if (!global.regState[userId]) {
+                    global.regState[userId] = {};
+                }
+                global.regState[userId].grade = grade;
+
+                if (typeof grade === 'number' && grade >= 11) {
+                    const { text, keyboard } = Menu.streamMenu();
+                    await bot.editMessageText(text, {
+                        chat_id: chatId,
+                        message_id: messageId,
+                        parse_mode: 'Markdown',
+                        reply_markup: { inline_keyboard: keyboard }
+                    });
+                } else {
+                    const name = global.regState[userId]?.name || 'Student';
+                    const lang = global.regState[userId]?.language || 'English';
+                    const newUser = database.createUser(userId, name, lang, grade);
+                    delete global.regState[userId];
+
+                    await bot.sendMessage(chatId, 
+                        `🧑‍🏫 **Welcome ${name}!**\n\n✅ Profile created for Grade ${grade}\n\nLet's start learning! 🚀`,
+                        { parse_mode: 'Markdown' }
+                    );
+                    
+                    const { text, keyboard } = Menu.mainMenu(newUser);
+                    await bot.editMessageText(text, {
+                        chat_id: chatId,
+                        message_id: messageId,
+                        parse_mode: 'Markdown',
+                        reply_markup: { inline_keyboard: keyboard }
+                    });
+                }
+            } catch (error) {
+                console.error('Grade selection error:', error);
+                await bot.editMessageText(
+                    '❌ Error selecting grade. Please try again with /start',
+                    {
+                        chat_id: chatId,
+                        message_id: messageId,
+                        parse_mode: 'Markdown'
+                    }
+                );
+            }
+            return;
+        }
+
+        // ===== STREAM SELECTION =====
         if (data.startsWith('stream_')) {
-            const stream = data.replace('stream_', '');
-            const name = global.regState[userId]?.name || 'Student';
-            const lang = global.regState[userId]?.language || 'English';
-            const grade = global.regState[userId]?.grade || 11;
+            try {
+                const stream = data.replace('stream_', '');
+                console.log(`📝 Stream selected: ${stream} for user ${userId}`);
+                
+                const name = global.regState[userId]?.name || 'Student';
+                const lang = global.regState[userId]?.language || 'English';
+                const grade = global.regState[userId]?.grade || 11;
 
-            const newUser = database.createUser(userId, name, lang, grade, stream);
-            delete global.regState[userId];
+                const newUser = database.createUser(userId, name, lang, grade, stream);
+                delete global.regState[userId];
 
-            await bot.sendMessage(chatId, `🧑‍🏫 **Welcome ${name}!**\n\n✅ Profile: Grade ${grade} (${stream} Stream)\n\nLet's start learning! 🚀`, { parse_mode: 'Markdown' });
-            const { text, keyboard } = Menu.mainMenu(newUser);
-            await bot.editMessageText(text, { chat_id: chatId, message_id: messageId, parse_mode: 'Markdown', reply_markup: { inline_keyboard: keyboard } });
+                await bot.sendMessage(chatId,
+                    `🧑‍🏫 **Welcome ${name}!**\n\n✅ Profile: Grade ${grade} (${stream} Stream)\n\nLet's start learning! 🚀`,
+                    { parse_mode: 'Markdown' }
+                );
+
+                const { text, keyboard } = Menu.mainMenu(newUser);
+                await bot.editMessageText(text, {
+                    chat_id: chatId,
+                    message_id: messageId,
+                    parse_mode: 'Markdown',
+                    reply_markup: { inline_keyboard: keyboard }
+                });
+            } catch (error) {
+                console.error('Stream selection error:', error);
+                await bot.editMessageText(
+                    '❌ Error selecting stream. Please try again with /start',
+                    {
+                        chat_id: chatId,
+                        message_id: messageId,
+                        parse_mode: 'Markdown'
+                    }
+                );
+            }
             return;
         }
 
         // ===== MAIN MENU =====
         if (data === 'menu' || data === 'home') {
             const user = database.getUser(userId);
+            if (!user) {
+                await bot.sendMessage(chatId, 'Please start with /start');
+                return;
+            }
             const { text, keyboard } = Menu.mainMenu(user);
-            await bot.editMessageText(text, { chat_id: chatId, message_id: messageId, parse_mode: 'Markdown', reply_markup: { inline_keyboard: keyboard } });
+            await bot.editMessageText(text, {
+                chat_id: chatId,
+                message_id: messageId,
+                parse_mode: 'Markdown',
+                reply_markup: { inline_keyboard: keyboard }
+            });
             return;
         }
 
@@ -204,7 +455,12 @@ bot.on('callback_query', async (callbackQuery) => {
             const user = database.getUser(userId);
             const subjects = user?.subjects || ['Mathematics', 'English'];
             const { text, keyboard } = Menu.studyMenu(subjects);
-            await bot.editMessageText(text, { chat_id: chatId, message_id: messageId, parse_mode: 'Markdown', reply_markup: { inline_keyboard: keyboard } });
+            await bot.editMessageText(text, {
+                chat_id: chatId,
+                message_id: messageId,
+                parse_mode: 'Markdown',
+                reply_markup: { inline_keyboard: keyboard }
+            });
             return;
         }
 
@@ -212,34 +468,344 @@ bot.on('callback_query', async (callbackQuery) => {
             const user = database.getUser(userId);
             const grade = user?.grade || 8;
             const { text, keyboard } = Menu.examsMenu(grade);
-            await bot.editMessageText(text, { chat_id: chatId, message_id: messageId, parse_mode: 'Markdown', reply_markup: { inline_keyboard: keyboard } });
+            await bot.editMessageText(text, {
+                chat_id: chatId,
+                message_id: messageId,
+                parse_mode: 'Markdown',
+                reply_markup: { inline_keyboard: keyboard }
+            });
             return;
         }
 
         if (data === 'settings') {
             const user = database.getUser(userId);
             const { text, keyboard } = Menu.settingsMenu(user);
-            await bot.editMessageText(text, { chat_id: chatId, message_id: messageId, parse_mode: 'Markdown', reply_markup: { inline_keyboard: keyboard } });
+            await bot.editMessageText(text, {
+                chat_id: chatId,
+                message_id: messageId,
+                parse_mode: 'Markdown',
+                reply_markup: { inline_keyboard: keyboard }
+            });
             return;
         }
 
         if (data === 'reminders') {
             const user = database.getUser(userId);
             const { text, keyboard } = Menu.reminderMenu(user);
-            await bot.editMessageText(text, { chat_id: chatId, message_id: messageId, parse_mode: 'Markdown', reply_markup: { inline_keyboard: keyboard } });
+            await bot.editMessageText(text, {
+                chat_id: chatId,
+                message_id: messageId,
+                parse_mode: 'Markdown',
+                reply_markup: { inline_keyboard: keyboard }
+            });
             return;
         }
 
         if (data === 'dailytasks') {
             const user = database.getUser(userId);
             const { text, keyboard } = Menu.dailyTasksMenu(user);
-            await bot.editMessageText(text, { chat_id: chatId, message_id: messageId, parse_mode: 'Markdown', reply_markup: { inline_keyboard: keyboard } });
+            await bot.editMessageText(text, {
+                chat_id: chatId,
+                message_id: messageId,
+                parse_mode: 'Markdown',
+                reply_markup: { inline_keyboard: keyboard }
+            });
             return;
         }
 
         if (data === 'schedule') {
             const { text, keyboard } = Menu.scheduleMenu();
-            await bot.editMessageText(text, { chat_id: chatId, message_id: messageId, parse_mode: 'Markdown', reply_markup: { inline_keyboard: keyboard } });
+            await bot.editMessageText(text, {
+                chat_id: chatId,
+                message_id: messageId,
+                parse_mode: 'Markdown',
+                reply_markup: { inline_keyboard: keyboard }
+            });
+            return;
+        }
+
+        if (data === 'ai') {
+            await bot.editMessageText(
+                `🧑‍🏫 **Ask Mr. M Anything!**
+
+I can help with:
+• 📖 Explaining concepts
+• 🧮 Solving problems
+• 📝 Creating summaries
+• ❓ Answering questions
+
+Just type your question!`,
+                {
+                    chat_id: chatId,
+                    message_id: messageId,
+                    parse_mode: 'Markdown',
+                    reply_markup: {
+                        inline_keyboard: [[{ text: '🔙 Back', callback_data: 'menu' }]]
+                    }
+                }
+            );
+            return;
+        }
+
+        if (data === 'library') {
+            const user = database.getUser(userId);
+            const grade = user?.grade || 8;
+            const subjects = user?.subjects || ['Mathematics', 'English'];
+            
+            let text = `📖 **Mr. M's Library**\n\n📚 **Textbooks for Grade ${grade}:**\n`;
+            subjects.forEach(s => {
+                text += `\n• ${Menu.getEmoji(s)} ${s} Textbook`;
+            });
+            text += '\n\n💡 *Upload your own textbooks for personalized learning!*';
+
+            const keyboard = [
+                [{ text: '📤 Upload Book', callback_data: 'upload' }],
+                [{ text: '🔙 Back', callback_data: 'menu' }]
+            ];
+
+            await bot.editMessageText(text, {
+                chat_id: chatId,
+                message_id: messageId,
+                parse_mode: 'Markdown',
+                reply_markup: { inline_keyboard: keyboard }
+            });
+            return;
+        }
+
+        if (data === 'upload') {
+            const keyboard = [
+                [{ text: '📚 Upload Book', callback_data: 'upload' }],
+                [{ text: '📖 My Books', callback_data: 'mybooks' }],
+                [{ text: '🔙 Back', callback_data: 'menu' }]
+            ];
+
+            await bot.editMessageText(
+                `📚 **Upload Your Textbook**
+
+Send me your book file and I'll:
+• 📖 Extract lessons
+• ❓ Create quizzes
+• 📅 Generate schedule
+• 📝 Make worksheets
+
+*Supported: PDF, DOCX, TXT, EPUB, MD*
+*Max: 50MB*
+
+Just send the file!`,
+                {
+                    chat_id: chatId,
+                    message_id: messageId,
+                    parse_mode: 'Markdown',
+                    reply_markup: { inline_keyboard: keyboard }
+                }
+            );
+            return;
+        }
+
+        if (data === 'mybooks') {
+            const books = await bookProcessor.getUserBooks(userId);
+            
+            if (!books || books.length === 0) {
+                await bot.editMessageText(
+                    '📚 **No books uploaded yet.**\n\nUpload your textbook to get started!',
+                    {
+                        chat_id: chatId,
+                        message_id: messageId,
+                        parse_mode: 'Markdown',
+                        reply_markup: {
+                            inline_keyboard: [
+                                [{ text: '📤 Upload Book', callback_data: 'upload' }],
+                                [{ text: '🔙 Back', callback_data: 'menu' }]
+                            ]
+                        }
+                    }
+                );
+                return;
+            }
+
+            let text = '📚 **Your Books**\n\n';
+            books.forEach((book, i) => {
+                text += `${i + 1}. 📖 ${book.originalFilename}\n`;
+                text += `   📚 ${book.subject} | Grade ${book.grade}\n`;
+                text += `   📊 ${book.totalChunks} sections\n\n`;
+            });
+
+            const keyboard = [
+                [{ text: '📤 Upload More', callback_data: 'upload' }],
+                [{ text: '📅 Generate Schedule', callback_data: 'schedule_generate' }],
+                [{ text: '🔙 Back', callback_data: 'menu' }]
+            ];
+
+            await bot.editMessageText(text, {
+                chat_id: chatId,
+                message_id: messageId,
+                parse_mode: 'Markdown',
+                reply_markup: { inline_keyboard: keyboard }
+            });
+            return;
+        }
+
+        if (data === 'progress') {
+            const user = database.getUser(userId);
+            if (!user) return;
+
+            const totalQuizzes = user.quizScores?.length || 0;
+            const avgScore = totalQuizzes > 0 
+                ? Math.round(user.quizScores.reduce((a, b) => a + b, 0) / totalQuizzes)
+                : 0;
+
+            let text = `
+📊 **Your Progress**
+
+👤 ${user.name}
+🏆 Level: ${user.level || 1}
+⭐ XP: ${user.xp || 0}
+🔥 Streak: ${user.streak || 0} days
+📝 Quizzes: ${totalQuizzes}
+📊 Avg Quiz Score: ${avgScore}%
+
+📚 **Subject Progress:**
+`;
+
+            if (user.progress) {
+                Object.entries(user.progress).forEach(([subject, data]) => {
+                    const emoji = Menu.getEmoji(subject);
+                    text += `\n• ${emoji} ${subject}: ${data.lessons || 0} lessons`;
+                });
+            }
+
+            const keyboard = [[{ text: '🔙 Back', callback_data: 'menu' }]];
+
+            await bot.editMessageText(text, {
+                chat_id: chatId,
+                message_id: messageId,
+                parse_mode: 'Markdown',
+                reply_markup: { inline_keyboard: keyboard }
+            });
+            return;
+        }
+
+        if (data === 'goal') {
+            const user = database.getUser(userId);
+            const goal = user?.dailyGoal || { lessons: 2, quiz: 10, hours: 1 };
+
+            const text = `
+🎯 **Daily Goal**
+
+✅ Read ${goal.lessons} lessons
+⬜ Complete ${goal.quiz} quiz questions
+⬜ Study for ${goal.hours} hour(s)
+
+Reward: +${config.XP.DAILY_GOAL} XP
+
+💡 *Complete all for bonus XP!*
+`;
+
+            const keyboard = [
+                [{ text: '✅ Complete Goal', callback_data: 'complete_goal' }],
+                [{ text: '🔙 Back', callback_data: 'menu' }]
+            ];
+
+            await bot.editMessageText(text, {
+                chat_id: chatId,
+                message_id: messageId,
+                parse_mode: 'Markdown',
+                reply_markup: { inline_keyboard: keyboard }
+            });
+            return;
+        }
+
+        if (data === 'complete_goal') {
+            const result = gamification.completeDailyGoal(userId);
+            await bot.editMessageText(result, {
+                chat_id: chatId,
+                message_id: messageId,
+                parse_mode: 'Markdown',
+                reply_markup: {
+                    inline_keyboard: [[{ text: '🔙 Back', callback_data: 'menu' }]]
+                }
+            });
+            return;
+        }
+
+        if (data === 'leaderboard') {
+            const leaderboard = database.getLeaderboard(10);
+            let text = '🏆 **Leaderboard**\n\n';
+
+            leaderboard.forEach((user, index) => {
+                const medal = { 0: '🥇', 1: '🥈', 2: '🥉' }[index] || `${index + 1}.`;
+                text += `${medal} ${user.name} - Level ${user.level || 1} (${user.xp || 0} XP)\n`;
+            });
+
+            const allUsers = Object.values(database.getAllUsers());
+            const userRank = allUsers
+                .sort((a, b) => (b.xp || 0) - (a.xp || 0))
+                .findIndex(u => u.id === String(userId)) + 1;
+            
+            if (userRank > 0) {
+                text += `\n📊 **Your Rank:** #${userRank}`;
+            }
+
+            const keyboard = [[{ text: '🔙 Back', callback_data: 'menu' }]];
+
+            await bot.editMessageText(text, {
+                chat_id: chatId,
+                message_id: messageId,
+                parse_mode: 'Markdown',
+                reply_markup: { inline_keyboard: keyboard }
+            });
+            return;
+        }
+
+        // ===== RESET =====
+        if (data === 'reset') {
+            const keyboard = [
+                [{ text: '✅ Yes, Reset Everything', callback_data: 'reset_confirm' }],
+                [{ text: '❌ Cancel', callback_data: 'menu' }]
+            ];
+            await bot.editMessageText(
+                `🔄 **Are you sure?**
+
+This will delete ALL your data:
+• Progress & XP
+• Books uploaded
+• Schedule
+• Reminders
+• Tasks
+• Settings
+
+*This cannot be undone!*`,
+                {
+                    chat_id: chatId,
+                    message_id: messageId,
+                    parse_mode: 'Markdown',
+                    reply_markup: { inline_keyboard: keyboard }
+                }
+            );
+            return;
+        }
+
+        if (data === 'reset_confirm') {
+            database.resetUser(userId);
+            delete global.regState[userId];
+            delete global.tempFiles[userId];
+            delete global.quizSessions[userId];
+            delete global.waitingHours[userId];
+            delete global.waitingReminder[userId];
+            delete global.waitingTask[userId];
+
+            await bot.editMessageText(
+                `🔄 **All your data has been reset.**
+
+You can start fresh with /start
+
+🧑‍🏫 *Mr. M is ready to help!*`,
+                {
+                    chat_id: chatId,
+                    message_id: messageId,
+                    parse_mode: 'Markdown'
+                }
+            );
             return;
         }
 
@@ -331,6 +897,7 @@ Examples:
 
         // ===== DAILY TASKS =====
         if (data === 'task_add') {
+            global.waitingTask[userId] = true;
             await bot.editMessageText(
                 `✅ **Add Daily Task**
 
@@ -345,8 +912,6 @@ I'll add it to your daily tasks!`,
                     parse_mode: 'Markdown'
                 }
             );
-            global.waitingTask = global.waitingTask || {};
-            global.waitingTask[userId] = true;
             return;
         }
 
@@ -398,12 +963,10 @@ I'll add it to your daily tasks!`,
                 const task = user.dailyTasks[index];
                 if (!task.completed) {
                     database.completeDailyTask(userId, index);
-                    
-                    // Add XP
-                    gamification.addXP(userId, 20, 'task_complete');
+                    gamification.addXP(userId, config.XP.TASK_COMPLETE, 'task_complete');
                     
                     await bot.editMessageText(
-                        `✅ **Task completed!**\n\n📝 ${task.task}\n✨ +20 XP`,
+                        `✅ **Task completed!**\n\n📝 ${task.task}\n✨ +${config.XP.TASK_COMPLETE} XP`,
                         {
                             chat_id: chatId,
                             message_id: messageId,
@@ -510,8 +1073,6 @@ I'll add it to your daily tasks!`,
             }
 
             database.updateUser(userId, { schedule });
-            
-            // Add XP
             gamification.addXP(userId, config.XP.SCHEDULE_COMPLETE, 'schedule');
 
             const text = scheduleGenerator.formatScheduleText(schedule);
@@ -569,57 +1130,6 @@ I'll add it to your daily tasks!`,
             return;
         }
 
-        // ===== RESET =====
-        if (data === 'reset') {
-            const keyboard = [
-                [{ text: '✅ Yes, Reset Everything', callback_data: 'reset_confirm' }],
-                [{ text: '❌ Cancel', callback_data: 'menu' }]
-            ];
-            await bot.editMessageText(
-                `🔄 **Are you sure?**
-
-This will delete ALL your data:
-• Progress & XP
-• Books uploaded
-• Schedule
-• Reminders
-• Tasks
-• Settings
-
-*This cannot be undone!*`,
-                {
-                    chat_id: chatId,
-                    message_id: messageId,
-                    parse_mode: 'Markdown',
-                    reply_markup: { inline_keyboard: keyboard }
-                }
-            );
-            return;
-        }
-
-        if (data === 'reset_confirm') {
-            database.resetUser(userId);
-            delete global.regState[userId];
-            delete global.tempFiles[userId];
-            delete global.quizSessions[userId];
-            delete global.waitingHours[userId];
-            delete global.waitingReminder[userId];
-
-            await bot.editMessageText(
-                `🔄 **All your data has been reset.**
-
-You can start fresh with /start
-
-🧑‍🏫 *Mr. M is ready to help!*`,
-                {
-                    chat_id: chatId,
-                    message_id: messageId,
-                    parse_mode: 'Markdown'
-                }
-            );
-            return;
-        }
-
         // ===== SETTINGS =====
         if (data === 'set_grade') {
             const { text, keyboard } = Menu.gradeMenu();
@@ -652,6 +1162,7 @@ You can start fresh with /start
         }
 
         if (data === 'set_exam') {
+            global.waitingExamDate[userId] = true;
             await bot.editMessageText(
                 `📅 **Set Exam Date**
 
@@ -666,7 +1177,6 @@ I'll count down the days for you!`,
                     parse_mode: 'Markdown'
                 }
             );
-            global.waitingExamDate[userId] = true;
             return;
         }
 
@@ -936,246 +1446,6 @@ I'll count down the days for you!`,
             return;
         }
 
-        // ===== AI =====
-        if (data === 'ai') {
-            await bot.editMessageText(
-                `🧑‍🏫 **Ask Mr. M Anything!**
-
-I can help with:
-• 📖 Explaining concepts
-• 🧮 Solving problems
-• 📝 Creating summaries
-• ❓ Answering questions
-
-Just type your question!`,
-                {
-                    chat_id: chatId,
-                    message_id: messageId,
-                    parse_mode: 'Markdown',
-                    reply_markup: {
-                        inline_keyboard: [[{ text: '🔙 Back', callback_data: 'menu' }]]
-                    }
-                }
-            );
-            return;
-        }
-
-        // ===== LIBRARY =====
-        if (data === 'library') {
-            const user = database.getUser(userId);
-            const grade = user?.grade || 8;
-            const subjects = user?.subjects || ['Mathematics', 'English'];
-            
-            let text = `📖 **Mr. M's Library**\n\n📚 **Textbooks for Grade ${grade}:**\n`;
-            subjects.forEach(s => {
-                text += `\n• ${Menu.getEmoji(s)} ${s} Textbook`;
-            });
-            text += '\n\n💡 *Upload your own textbooks for personalized learning!*';
-
-            const keyboard = [
-                [{ text: '📤 Upload Book', callback_data: 'upload' }],
-                [{ text: '🔙 Back', callback_data: 'menu' }]
-            ];
-
-            await bot.editMessageText(text, {
-                chat_id: chatId,
-                message_id: messageId,
-                parse_mode: 'Markdown',
-                reply_markup: { inline_keyboard: keyboard }
-            });
-            return;
-        }
-
-        // ===== UPLOAD =====
-        if (data === 'upload') {
-            const keyboard = [
-                [{ text: '📚 Upload Book', callback_data: 'upload' }],
-                [{ text: '📖 My Books', callback_data: 'mybooks' }],
-                [{ text: '🔙 Back', callback_data: 'menu' }]
-            ];
-
-            await bot.editMessageText(
-                `📚 **Upload Your Textbook**
-
-Send me your book file and I'll:
-• 📖 Extract lessons
-• ❓ Create quizzes
-• 📅 Generate schedule
-• 📝 Make worksheets
-
-*Supported: PDF, DOCX, TXT, EPUB, MD*
-*Max: 50MB*
-
-Just send the file!`,
-                {
-                    chat_id: chatId,
-                    message_id: messageId,
-                    parse_mode: 'Markdown',
-                    reply_markup: { inline_keyboard: keyboard }
-                }
-            );
-            return;
-        }
-
-        if (data === 'mybooks') {
-            const books = await bookProcessor.getUserBooks(userId);
-            
-            if (!books || books.length === 0) {
-                await bot.editMessageText(
-                    '📚 **No books uploaded yet.**\n\nUpload your textbook to get started!',
-                    {
-                        chat_id: chatId,
-                        message_id: messageId,
-                        parse_mode: 'Markdown',
-                        reply_markup: {
-                            inline_keyboard: [
-                                [{ text: '📤 Upload Book', callback_data: 'upload' }],
-                                [{ text: '🔙 Back', callback_data: 'menu' }]
-                            ]
-                        }
-                    }
-                );
-                return;
-            }
-
-            let text = '📚 **Your Books**\n\n';
-            books.forEach((book, i) => {
-                text += `${i + 1}. 📖 ${book.originalFilename}\n`;
-                text += `   📚 ${book.subject} | Grade ${book.grade}\n`;
-                text += `   📊 ${book.totalChunks} sections\n\n`;
-            });
-
-            const keyboard = [
-                [{ text: '📤 Upload More', callback_data: 'upload' }],
-                [{ text: '📅 Generate Schedule', callback_data: 'schedule_generate' }],
-                [{ text: '🔙 Back', callback_data: 'menu' }]
-            ];
-
-            await bot.editMessageText(text, {
-                chat_id: chatId,
-                message_id: messageId,
-                parse_mode: 'Markdown',
-                reply_markup: { inline_keyboard: keyboard }
-            });
-            return;
-        }
-
-        // ===== PROGRESS =====
-        if (data === 'progress') {
-            const user = database.getUser(userId);
-            if (!user) return;
-
-            const totalQuizzes = user.quizScores?.length || 0;
-            const avgScore = totalQuizzes > 0 
-                ? Math.round(user.quizScores.reduce((a, b) => a + b, 0) / totalQuizzes)
-                : 0;
-
-            let text = `
-📊 **Your Progress**
-
-👤 ${user.name}
-🏆 Level: ${user.level || 1}
-⭐ XP: ${user.xp || 0}
-🔥 Streak: ${user.streak || 0} days
-📝 Quizzes: ${totalQuizzes}
-📊 Avg Quiz Score: ${avgScore}%
-
-📚 **Subject Progress:**
-`;
-
-            if (user.progress) {
-                Object.entries(user.progress).forEach(([subject, data]) => {
-                    const emoji = Menu.getEmoji(subject);
-                    text += `\n• ${emoji} ${subject}: ${data.lessons || 0} lessons`;
-                });
-            }
-
-            const keyboard = [[{ text: '🔙 Back', callback_data: 'menu' }]];
-
-            await bot.editMessageText(text, {
-                chat_id: chatId,
-                message_id: messageId,
-                parse_mode: 'Markdown',
-                reply_markup: { inline_keyboard: keyboard }
-            });
-            return;
-        }
-
-        // ===== GOAL =====
-        if (data === 'goal') {
-            const user = database.getUser(userId);
-            const goal = user?.dailyGoal || { lessons: 2, quiz: 10, hours: 1 };
-
-            const text = `
-🎯 **Daily Goal**
-
-✅ Read ${goal.lessons} lessons
-⬜ Complete ${goal.quiz} quiz questions
-⬜ Study for ${goal.hours} hour(s)
-
-Reward: +${config.XP.DAILY_GOAL} XP
-
-💡 *Complete all for bonus XP!*
-`;
-
-            const keyboard = [
-                [{ text: '✅ Complete Goal', callback_data: 'complete_goal' }],
-                [{ text: '🔙 Back', callback_data: 'menu' }]
-            ];
-
-            await bot.editMessageText(text, {
-                chat_id: chatId,
-                message_id: messageId,
-                parse_mode: 'Markdown',
-                reply_markup: { inline_keyboard: keyboard }
-            });
-            return;
-        }
-
-        if (data === 'complete_goal') {
-            const result = gamification.completeDailyGoal(userId);
-            await bot.editMessageText(result, {
-                chat_id: chatId,
-                message_id: messageId,
-                parse_mode: 'Markdown',
-                reply_markup: {
-                    inline_keyboard: [[{ text: '🔙 Back', callback_data: 'menu' }]]
-                }
-            });
-            return;
-        }
-
-        // ===== LEADERBOARD =====
-        if (data === 'leaderboard') {
-            const leaderboard = database.getLeaderboard(10);
-            let text = '🏆 **Leaderboard**\n\n';
-
-            leaderboard.forEach((user, index) => {
-                const medal = { 0: '🥇', 1: '🥈', 2: '🥉' }[index] || `${index + 1}.`;
-                text += `${medal} ${user.name} - Level ${user.level || 1} (${user.xp || 0} XP)\n`;
-            });
-
-            // Find user rank
-            const allUsers = Object.values(database.getAllUsers());
-            const userRank = allUsers
-                .sort((a, b) => (b.xp || 0) - (a.xp || 0))
-                .findIndex(u => u.id === String(userId)) + 1;
-            
-            if (userRank > 0) {
-                text += `\n📊 **Your Rank:** #${userRank}`;
-            }
-
-            const keyboard = [[{ text: '🔙 Back', callback_data: 'menu' }]];
-
-            await bot.editMessageText(text, {
-                chat_id: chatId,
-                message_id: messageId,
-                parse_mode: 'Markdown',
-                reply_markup: { inline_keyboard: keyboard }
-            });
-            return;
-        }
-
     } catch (error) {
         console.error('Callback error:', error);
         await bot.sendMessage(chatId, '❌ An error occurred. Please try again.');
@@ -1354,159 +1624,12 @@ bot.on('callback_query', async (callbackQuery) => {
     }
 });
 
-// ============ MESSAGE HANDLER ============
+// ============ REMINDER CRON JOBS ============
 
-bot.on('message', async (msg) => {
-    const chatId = msg.chat.id;
-    const userId = msg.from.id;
-    const text = msg.text;
-
-    if (!text || text.startsWith('/')) return;
-    if (msg.document) return;
-
-    try {
-        const user = database.getUser(userId);
-
-        // ===== REGISTRATION =====
-        if (global.regState[userId]?.step === 'name') {
-            global.regState[userId].name = text;
-            global.regState[userId].step = 'complete';
-            const { text: langText, keyboard } = Menu.languageMenu();
-            await bot.sendMessage(chatId, langText, {
-                reply_markup: { inline_keyboard: keyboard }
-            });
-            return;
-        }
-
-        // ===== REMINDER SETUP =====
-        if (global.waitingReminder && global.waitingReminder[userId]) {
-            const match = text.match(/^(\d{1,2}):(\d{2})\s+(.+)$/);
-            if (match) {
-                const hours = parseInt(match[1]);
-                const minutes = parseInt(match[2]);
-                const message = match[3];
-
-                if (hours >= 0 && hours <= 23 && minutes >= 0 && minutes <= 59) {
-                    const timeStr = `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}`;
-                    const user = database.getUser(userId);
-                    
-                    if (user) {
-                        const reminders = user.reminders || [];
-                        reminders.push({ time: timeStr, message, active: true });
-                        database.updateUser(userId, { reminders });
-                        
-                        delete global.waitingReminder[userId];
-                        
-                        await bot.sendMessage(chatId, 
-                            `✅ **Reminder set!**\n\n⏰ ${timeStr} - ${message}\n\nI'll remind you daily!`,
-                            { parse_mode: 'Markdown' }
-                        );
-                        
-                        const { text: menuText, keyboard } = Menu.mainMenu(user);
-                        await bot.sendMessage(chatId, menuText, {
-                            parse_mode: 'Markdown',
-                            reply_markup: { inline_keyboard: keyboard }
-                        });
-                        return;
-                    }
-                } else {
-                    await bot.sendMessage(chatId, 
-                        '❌ **Invalid time!**\n\nUse format: `16:00 Study Math`\n\nExample: `09:30 Review Biology`',
-                        { parse_mode: 'Markdown' }
-                    );
-                    return;
-                }
-            } else {
-                await bot.sendMessage(chatId, 
-                    '❌ **Invalid format!**\n\nUse: `16:00 Study Math`\n\nExample: `09:30 Review Biology`',
-                    { parse_mode: 'Markdown' }
-                );
-                return;
-            }
-        }
-
-        // ===== DAILY TASK SETUP =====
-        if (global.waitingTask && global.waitingTask[userId]) {
-            const user = database.getUser(userId);
-            if (user) {
-                database.addDailyTask(userId, text);
-                delete global.waitingTask[userId];
-                
-                await bot.sendMessage(chatId, 
-                    `✅ **Task added!**\n\n📝 ${text}\n\nKeep going! 💪`,
-                    { parse_mode: 'Markdown' }
-                );
-                
-                const { text: menuText, keyboard } = Menu.mainMenu(user);
-                await bot.sendMessage(chatId, menuText, {
-                    parse_mode: 'Markdown',
-                    reply_markup: { inline_keyboard: keyboard }
-                });
-                return;
-            }
-        }
-
-        // ===== EXAM DATE SETUP =====
-        if (global.waitingExamDate && global.waitingExamDate[userId]) {
-            const dateMatch = text.match(/^(\d{4})-(\d{2})-(\d{2})$/);
-            if (dateMatch) {
-                const year = parseInt(dateMatch[1]);
-                const month = parseInt(dateMatch[2]) - 1;
-                const day = parseInt(dateMatch[3]);
-                const examDate = new Date(year, month, day);
-
-                if (!isNaN(examDate) && examDate > new Date()) {
-                    database.updateUser(userId, { examDate: examDate.toISOString() });
-                    delete global.waitingExamDate[userId];
-                    
-                    const days = Math.ceil((examDate - new Date()) / (1000 * 60 * 60 * 24));
-                    await bot.sendMessage(chatId, 
-                        `📅 **Exam date set!**\n\n📅 ${text}\n⏰ ${days} days left!\n\n💪 You've got this!`,
-                        { parse_mode: 'Markdown' }
-                    );
-                    
-                    const user = database.getUser(userId);
-                    const { text: menuText, keyboard } = Menu.mainMenu(user);
-                    await bot.sendMessage(chatId, menuText, {
-                        parse_mode: 'Markdown',
-                        reply_markup: { inline_keyboard: keyboard }
-                    });
-                    return;
-                } else {
-                    await bot.sendMessage(chatId, 
-                        '❌ **Invalid date!**\n\nUse future date: `2026-06-15`',
-                        { parse_mode: 'Markdown' }
-                    );
-                    return;
-                }
-            } else {
-                await bot.sendMessage(chatId, 
-                    '❌ **Invalid format!**\n\nUse: `2026-06-15`',
-                    { parse_mode: 'Markdown' }
-                );
-                return;
-            }
-        }
-
-        // ===== AI TEACHER =====
-        if (user) {
-            const response = await aiTeacher.ask(userId, text, user);
-            await bot.sendMessage(chatId, response, { parse_mode: 'Markdown' });
-        } else {
-            await bot.sendMessage(chatId, 'Please start with /start first!');
-        }
-
-    } catch (error) {
-        console.error('Message error:', error);
-        await bot.sendMessage(chatId, '❌ An error occurred.');
-    }
-});
-
-// ============ REMINDER CRON JOB ============
+// Check reminders every minute
 cron.schedule('* * * * *', async () => {
     try {
         const dueReminders = proactive.checkReminders();
-        
         for (const reminder of dueReminders) {
             try {
                 const message = proactive.formatReminderMessage(reminder.userId, reminder);
