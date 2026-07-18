@@ -108,3 +108,157 @@ class ScheduleGenerator {
         }
 
         // If no topics found, create from chunks
+        if (topics.length === 0) {
+            for (let i = 0; i < Math.min(15, chunks.length); i++) {
+                const chunk = chunks[i];
+                topics.push({
+                    number: i + 1,
+                    title: `Section ${i + 1}`,
+                    content: chunk.substring(0, 400) + (chunk.length > 400 ? '...' : ''),
+                    difficulty: 'Medium',
+                    estimatedTime: Math.max(15, Math.floor(chunk.split(' ').length / 300))
+                });
+            }
+        }
+
+        return topics;
+    }
+
+    estimateDifficulty(text) {
+        const words = text.split(' ');
+        if (!words || words.length === 0) return 'Medium';
+
+        const avgWordLen = words.reduce((sum, w) => sum + w.length, 0) / words.length;
+        const sentences = text.match(/[.!?]+/g) || [];
+        const avgSentenceLen = words.length / Math.max(sentences.length, 1);
+
+        let score = 0;
+        if (avgWordLen > 7) score++;
+        if (avgSentenceLen > 20) score++;
+        if (words.length > 1000) score++;
+
+        if (score <= 1) return 'Easy';
+        if (score === 2) return 'Medium';
+        return 'Hard';
+    }
+
+    createSchedule(user, topics, studyHoursPerDay, books) {
+        const difficultyOrder = { Hard: 0, Medium: 1, Easy: 2 };
+        topics.sort((a, b) => difficultyOrder[a.difficulty] - difficultyOrder[b.difficulty]);
+
+        const weeks = [];
+        const topicsPerWeek = Math.max(1, Math.ceil(topics.length / 6));
+
+        for (let week = 0; week < Math.min(8, Math.ceil(topics.length / topicsPerWeek)); week++) {
+            const weekTopics = topics.slice(week * topicsPerWeek, (week + 1) * topicsPerWeek);
+            if (!weekTopics || weekTopics.length === 0) break;
+
+            const days = [];
+            for (let day = 0; day < 7; day++) {
+                if (day < weekTopics.length) {
+                    const topic = weekTopics[day];
+                    days.push({
+                        day: `Week ${week + 1}, Day ${day + 1}`,
+                        topic: topic.title,
+                        difficulty: topic.difficulty || 'Medium',
+                        time: `${topic.estimatedTime || 30} minutes`,
+                        tasks: [
+                            `📖 Read: ${topic.title}`,
+                            '📝 Take notes on key concepts',
+                            '❓ Answer practice questions',
+                            '🔄 Review and summarize'
+                        ]
+                    });
+                } else {
+                    days.push({
+                        day: `Week ${week + 1}, Day ${day + 1}`,
+                        topic: '📝 Review Day',
+                        difficulty: 'Easy',
+                        time: '30 minutes',
+                        tasks: [
+                            '🔄 Review all topics from this week',
+                            '❓ Take a practice quiz',
+                            '📝 Create summary notes'
+                        ]
+                    });
+                }
+            }
+
+            weeks.push({
+                week: week + 1,
+                focus: weekTopics[0]?.title?.substring(0, 50) + (weekTopics[0]?.title?.length > 50 ? '...' : '') || 'Review',
+                days
+            });
+        }
+
+        return {
+            userName: user.name || 'Student',
+            grade: user.grade,
+            subject: books[0]?.subject || 'General',
+            totalTopics: topics.length,
+            studyHoursPerDay,
+            weeks,
+            booksUsed: books.map(b => b.originalFilename || 'Unknown'),
+            generatedFromBooks: true,
+            generatedAt: new Date().toISOString()
+        };
+    }
+
+    formatScheduleText(schedule) {
+        if (schedule.error) return schedule.error;
+
+        let text = `
+📅 **Personalized Study Schedule**
+👤 ${schedule.userName}
+📚 Grade: ${schedule.grade}
+📖 Subject: ${schedule.subject}
+⏰ Study Time: ${schedule.studyHoursPerDay} hours/day
+📚 Total Topics: ${schedule.totalTopics}
+
+📖 **Books Used:**
+`;
+
+        schedule.booksUsed.forEach(book => {
+            text += `• ${book}\n`;
+        });
+
+        text += '\n' + '='.repeat(50) + '\n\n';
+
+        for (const week of schedule.weeks) {
+            text += `
+📌 **Week ${week.week}**
+🎯 Focus: ${week.focus}
+${'─'.repeat(40)}
+`;
+
+            for (const day of week.days) {
+                text += `
+${day.day}
+📖 Topic: ${day.topic}
+📊 Difficulty: ${day.difficulty}
+⏱️ Time: ${day.time}
+📝 Tasks:
+`;
+                for (const task of day.tasks) {
+                    text += `   • ${task}\n`;
+                }
+                text += '\n';
+            }
+        }
+
+        text += `
+💡 **Study Tips:**
+• Study in 45-minute sessions with 10-minute breaks
+• Review previous topics before starting new ones
+• Use the AI Teacher for difficult concepts
+• Track your progress daily
+• Stay consistent – small steps lead to big results!
+
+📅 *This schedule is generated from your uploaded book.*
+`;
+
+        return text;
+    }
+}
+
+module.exports = ScheduleGenerator;
